@@ -1,0 +1,563 @@
+{
+    "AWSTemplateFormatVersion" : "2010-09-09",
+    "Transform"                : "AWS::Serverless-2016-10-31",
+    "Description"              : "Keeps the list of Cost and Usage Reports for a reporting period up to date with only 1 copy of the report in the S3 bucket.",
+
+
+    "Parameters"               : {
+		"CostAndUsageReportLambdaArn" : {
+			"Description" : "The ARN of the Lambda function that creates CUR definitions.",
+			"Type" : "String",
+			"Default" : "arn:aws:lambda:us-east-1:252486826203:function:CostAndUsageReportResource"
+		},
+		"Frequency"    : {
+            "Description" : "The frequency the reports are delivered.",
+            "Type"        : "String",
+            "AllowedValues" : [
+                "Hourly",
+                "Daily"
+            ],
+            "Default"       : "Daily"
+        },
+		"ReportCompression" : {
+			"Type" : "String",
+			"Description" : "The type of compression to use for the CUR. Don't use ZIP.",
+			"AllowedValues" : [
+				"GZIP",
+				"ZIP"
+			],
+			"Default" : "GZIP"
+		},
+        "ReportName"   : {
+            "Description" : "The name of the report",
+            "Type"        : "String",
+            "MinLength"   : 1,
+            "MaxLength"   : 256
+		},
+        "ReportDeliveryBucketName" : {
+            "Type" : "String",
+            "Description" : "The S3 bucket where new CUR reports will be delivered to.",
+            "AllowedPattern" : "^[a-z](?:(?:\\.(?!\\.))|-|[a-zA-Z0-9]){1,61}[a-z]$",
+            "ConstraintDescription" : "Member must satisfy regular expression pattern: ^[a-z](?:(?:\\.(?!\\.))|-|[a-zA-Z0-9]){1,61}[a-z]$"
+        },
+		"ReportRepositoryBucketName" : {
+            "Type" : "String",
+            "Description" : "The S3 bucket where only the most recent CURs for each month are kept.",
+            "AllowedPattern" : "^[a-z](?:(?:\\.(?!\\.))|-|[a-zA-Z0-9]){1,61}[a-z]$",
+            "ConstraintDescription" : "Member must satisfy regular expression pattern: ^[a-z](?:(?:\\.(?!\\.))|-|[a-zA-Z0-9]){1,61}[a-z]$"
+        },
+        "LogRetentionInDays" : {
+            "Type" : "Number",
+            "Description" : "The number of days to retain the CloudWatch Logs for the function. If this is set to 0, it will be infinite retention.",
+            "MinValue"    : 0,
+            "Default"     : 7
+        },
+        "NotificationEmail"  : {
+            "Description" : "The email address notifications will be sent to when processing errors occur.",
+            "Type"        : "String"
+        },
+        "OrganizationTag"    : {
+            "Description" : "The organization this account is associated with",
+            "Type"        : "String",
+            "AllowedPattern" : "^\\S{2,}$",
+            "ConstraintDescription" : "Member must satisfy regular expression pattern: ^\\S{2,}$"
+        },
+        "ApplicationTag"     : {
+            "Description" : "The application this account is associated with",
+            "Type"        : "String",
+            "AllowedPattern" : "^\\S{2,}$",
+            "ConstraintDescription" : "Member must satisfy regular expression pattern: ^\\S{2,}$"
+        },
+        "EnvironmentTag"     : {
+            "Description" : "The environment this account is associated with",
+            "Type"        : "String",
+            "AllowedPattern" : "^\\S{2,}$",
+            "ConstraintDescription" : "Member must satisfy regular expression pattern: ^\\S{2,}$"
+        }
+    },
+
+
+    "Conditions"               : {
+        "InfiniteRetention" : {
+            "Fn::Equals" : [
+                {
+                    "Ref" : "LogRetentionInDays"
+                },
+                0
+            ]
+        },
+        "CreateSNS"         : {
+            "Fn::Not" : [
+                {
+                    "Fn::Equals" : [
+                        {
+                            "Ref" : "NotificationEmail"
+                        },
+                        ""
+                    ]
+                }
+            ]
+        }
+    },
+
+	"Mappings" : {
+		"Internal" : {
+			"Lambda" : {
+				"FunctionName" : "CURManager"
+			}
+		},
+		"Compression" : {
+			"GZIP" : {
+				"Extension" : ".csv.gz"
+			},
+			"ZIP" : {
+				"Extension" : ".csv.zip"
+			},
+			"NONE" : {
+				"Extension" : ".csv"
+			}
+		}
+	},
+
+
+    "Resources"                : {
+		"CostAndUsageReport"   : {
+			"Type" : "Custom::CUR",
+			"Properties" : {
+				"ServiceToken" : {
+					"Ref" : "CostAndUsageReportLambdaArn"
+				},
+				"ReportDefinition" : {
+					"ReportName" : {
+						"Ref" : "ReportName"
+					},
+					"Compression" : "GZIP",
+					"Format"      : "TextORcsv",
+					"S3Bucket"    : {
+						"Ref" : "ReportDeliveryS3Bucket"
+					},
+					"S3Prefix"    : {
+						"Fn::Join" : [
+							"",
+							[
+								{
+									"Ref" : "AWS::AccountId"
+								},
+								"/"
+							]
+						]
+					},
+					"S3Region"      : {
+						"Ref" : "AWS::Region"
+					},
+					"TimeUnit"    : {
+						"Ref" : "Frequency"
+					}
+				}
+			},
+			"DependsOn"  : [
+				"ReportDeliveryS3BucketPolicy"
+			]
+		},
+
+		"ReportDeliveryS3Bucket" : {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {
+			    "BucketName" : {
+					"Ref" : "ReportDeliveryBucketName"
+				}
+            }
+        },
+
+        "ReportDeliveryS3BucketPolicy" : {
+            "Type" : "AWS::S3::BucketPolicy",
+            "Properties" : {
+                "Bucket" : {
+                    "Ref" : "ReportDeliveryS3Bucket"
+                },
+                "PolicyDocument" : {
+                    "Version" : "2008-10-17",
+                    "Id"      : "1",
+                    "Statement" : [
+						{
+							"Sid": "0",
+							"Effect": "Deny",
+							"NotPrincipal": {
+								"AWS": [
+									"AIDAIONIVVYH4HUH237AE",									
+									"arn:aws:iam::386209384616:user/IAM-Programmatic-Access-Prod",
+									"AIDAJLSI7DTYBUZAOKHVM",
+									"arn:aws:iam::386209384616:user/Origami_CustomerReportPublishing_us-east-1",
+									"arn:aws:iam::386209384616:root"
+								]
+							},
+							"Action": [
+								"s3:PutObject"
+							],
+							"Resource":  {
+								"Fn::Sub" : "arn:aws:s3:::${ReportDeliveryS3Bucket}/*"
+							}
+						},
+                        {
+                            "Sid" : "1",
+                            "Effect" : "Allow",
+                            "Principal" : {
+                                "AWS" : "arn:aws:iam::386209384616:root"
+                            },
+                            "Action"    : [
+                                "s3:GetBucketAcl",
+                                "s3:GetBucketPolicy"
+                            ],
+                            "Resource"  : {
+								"Fn::Sub" : "arn:aws:s3:::${ReportDeliveryS3Bucket}"								
+							}
+                        },
+                        {
+                            "Sid" : "2",
+                            "Effect" : "Allow",
+                            "Principal" : {
+                                "AWS" : "arn:aws:iam::386209384616:root"
+                            },
+                            "Action"    : [
+                                "s3:PutObject"
+                            ],
+                            "Resource"  : {
+								"Fn::Sub" : "arn:aws:s3:::${ReportDeliveryS3Bucket}/*"
+							}
+                        }
+                    ]
+                }
+            }
+        },
+
+		"ReportRepositoryS3Bucket" : {
+            "Type" : "AWS::S3::Bucket",
+            "Properties" : {
+			    "BucketName" : {
+					"Ref" : "ReportRepositoryBucketName"
+				}
+            }
+        },
+
+		"ReportRepoS3BucketPolicy" : {
+            "Type" : "AWS::S3::BucketPolicy",
+            "Properties" : {
+                "Bucket" : {
+                    "Ref" : "ReportRepositoryS3Bucket"
+                },
+                "PolicyDocument" : {
+                    "Version" : "2008-10-17",
+                    "Id"      : "1",
+                    "Statement" : [
+                        {
+                            "Sid" : "1",
+                            "Effect" : "Deny",
+                            "Principal" : "*",
+                            "Action"    : [
+                                "s3:PutObject",
+                                "s3:DeleteObject"
+                            ],
+                            "Resource"  : {
+								"Fn::Sub" : "arn:aws:s3:::${ReportRepositoryS3Bucket}/*"								
+							},
+							"Condition" : {
+								"StringNotLike" : {
+									"aws:UserId" : [
+										{
+											"Fn::Sub" : "${LambdaCURCleanupRole.RoleId}:*"
+										}
+									]
+								}
+							}
+                        }
+                    ]
+                }
+            }
+        },
+
+        "SNSTopic" : {
+            "Type" : "AWS::SNS::Topic",
+            "Condition" : "CreateSNS",
+            "Properties" : {
+                "DisplayName" : "CURManagerExecutionFailures",
+                "Subscription" : [
+                    {
+                        "Protocol" : "email",
+                        "Endpoint" : {
+                            "Ref" : "NotificationEmail"
+                        }
+                    }
+                ],
+                "TopicName"    : "CURManagerExecutionFailures"
+            }
+        },
+
+        "LambdaCURCleanupRole" : {
+            "Type" : "AWS::IAM::Role",
+            "Properties" : {
+                "AssumeRolePolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "sts:AssumeRole"
+                            ],
+                            "Principal" : {
+                                "Service" : [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "LambdaCWLPolicy"     : {
+            "Type" : "AWS::IAM::Policy",
+            "Properties" : {
+                "PolicyName" : "LambdaCWLPolicy",
+                "PolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "logs:CreateLogStream",
+                                "logs:CreateLogGroup",
+                                "logs:DescribeLogStreams",
+                                "logs:PutLogEvents",
+                                "logs:DescribeLogGroups"
+                            ],
+                            "Resource" : {
+                                "Fn::Join" : [
+                                    "",
+                                    [
+                                        "arn:aws:logs:*:",
+                                        {
+                                            "Ref" : "AWS::AccountId"
+                                        },
+                                        ":*"
+                                    ]
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "Roles"          : [
+                    {
+                        "Ref" : "LambdaCURCleanupRole"
+                    }
+                ]
+            }
+        },
+        "LambdaKMSPolicy"     : {
+            "Type" : "AWS::IAM::Policy",
+            "Properties" : {
+                "PolicyName" : "LambdaKMSPolicy",
+                "PolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "kms:Decrypt"
+                            ],
+                            "Resource" : [
+                                "*"
+                            ]
+                        }
+                    ]
+                },
+                "Roles"          : [
+                    {
+                        "Ref" : "LambdaCURCleanupRole"
+                    }
+                ]
+            }
+        },
+        "LambdaSNSPolicy"     : {
+            "Type" : "AWS::IAM::Policy",
+			"Condition" : "CreateSNS",
+            "Properties" : {
+                "PolicyName" : "LambdaSNSPolicy",
+                "PolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "sns:Publish"
+                            ],
+                            "Resource" : [
+                                {
+                                    "Ref" : "SNSTopic"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "Roles"          : [
+                    {
+                        "Ref" : "LambdaCURCleanupRole"
+                    }
+                ]
+            }
+        },
+        "LambdaS3Policy"      : {
+            "Type" : "AWS::IAM::Policy",
+            "Properties" : {
+                "PolicyName" : "LambdaS3Policy",
+                "PolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "s3:GetObject"
+                            ],
+                            "Resource" : [
+                                {
+									"Fn::Sub" : "arn:aws:s3:::${ReportDeliveryBucketName}/*"                                 
+                                }
+                            ]
+                        },
+						{
+                            "Effect" : "Allow",
+                            "Action" : [
+								"s3:DeleteObject",
+								"s3:PutObject"
+                            ],
+                            "Resource" : [
+                                {
+									"Fn::Sub" : "arn:aws:s3:::${ReportRepositoryBucketName}/*"                                 
+                                }
+                            ]
+                        },
+						{
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "s3:ListBucket"
+                            ],
+                            "Resource" : [
+                                {
+									"Fn::Sub" : "arn:aws:s3:::${ReportRepositoryBucketName}"                                 
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "Roles"          : [
+                    {
+                        "Ref" : "LambdaCURCleanupRole"
+                    }
+                ]
+            }
+        },
+
+        "LambdaFunction"      : {
+            "Type" : "AWS::Serverless::Function",
+            "Properties" : {
+				"FunctionName" : {
+					"Fn::FindInMap" : [ "Internal", "Lambda", "FunctionName" ]
+				},
+				"Description" : "Moves the most recent CUR into a new bucket and deletes the older reports for that month in the new bucket.",
+                "Handler" : "CURManager::BAMCIS.LambdaFunctions.CURManager.Entrypoint::Exec",
+                "Runtime" : "dotnetcore2.1",
+                "CodeUri" : "",
+                "MemorySize" : 256,
+                "Timeout"    : 30,
+                "Role"       : {
+                    "Fn::GetAtt" : [
+                        "LambdaCURCleanupRole",
+                        "Arn"
+                    ]
+                },
+				"Environment" : {
+					 "Variables" : {
+						"SNS_TOPIC" : {
+							"Fn::If" : [
+								"CreateSNS",
+								{
+									"Ref" : "SNSTopic"
+								},
+								{
+									"Ref" : "AWS::NoValue"
+								}
+							]
+						},
+						"DESTINATION_S3_BUCKET" : {
+							"Ref" : "ReportRepositoryBucketName"
+						}
+					 }
+				},
+                "Events"     : {
+                    "S3ObjectCreated" : {
+					   "Type" : "S3",
+					   "Properties" : {
+					     "Bucket" : {
+							"Ref" : "ReportDeliveryS3Bucket"
+						 },
+						 "Events" : [
+							"s3:ObjectCreated:*"
+						 ],
+						 "Filter" : {
+							"S3Key" : {
+							   "Rules" : [
+								{
+								  "Name" : "suffix",
+								  "Value" : {
+									"Fn::FindInMap" : ["Compression", { "Ref" : "ReportCompression" }, "Extension" ]
+								  }
+								}
+							   ]
+							}
+						 }
+					   }
+                    }
+                },
+				"Tags"       : {
+                    "Name" : "CURUpdater",
+                    "Environment" : {
+                        "Ref" : "EnvironmentTag"
+                    },
+                    "Application" : {
+                        "Ref" : "ApplicationTag"
+                    },
+                    "Organization" : {
+                        "Ref" : "OrganizationTag"
+                    }
+                }
+            }
+        },
+
+        "CloudWatchLogGroup"  : {
+            "Type" : "AWS::Logs::LogGroup",
+            "Properties" : {
+                "LogGroupName" : {
+					"Fn::Sub" : [
+						"/aws/lambda/${Name}",
+						{
+							"Name" : {
+								"Fn::FindInMap" : [ "Internal", "Lambda", "FunctionName" ]
+							}
+						}
+					]
+				},
+                "RetentionInDays" : {
+                    "Fn::If" : [
+                        "InfiniteRetention",
+                        {
+                            "Ref" : "AWS::NoValue"
+                        },
+                        {
+                            "Ref" : "LogRetentionInDays"
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "Outputs"                  : {
+    }
+}

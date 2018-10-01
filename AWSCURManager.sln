@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27703.2018
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AWSCURManager", "AWSCURManager\AWSCURManager.csproj", "{1ABE0855-958B-4CB3-9B28-22B2299D56FF}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AWSCURManager.Tests", "AWSCURManager.Tests\AWSCURManager.Tests.csproj", "{503E4EF9-38AA-45AA-ABDB-3104E78209FA}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{A86D1A3B-78CE-4B88-B7E4-BB0449599A6B}"
+	ProjectSection(SolutionItems) = preProject
+		LICENSE = LICENSE
+		README.md = README.md
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1ABE0855-958B-4CB3-9B28-22B2299D56FF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1ABE0855-958B-4CB3-9B28-22B2299D56FF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1ABE0855-958B-4CB3-9B28-22B2299D56FF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1ABE0855-958B-4CB3-9B28-22B2299D56FF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{503E4EF9-38AA-45AA-ABDB-3104E78209FA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{503E4EF9-38AA-45AA-ABDB-3104E78209FA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{503E4EF9-38AA-45AA-ABDB-3104E78209FA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{503E4EF9-38AA-45AA-ABDB-3104E78209FA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {FCE3C17F-DBBB-474A-A3F1-7725C7D9298D}
+	EndGlobalSection
+EndGlobal
