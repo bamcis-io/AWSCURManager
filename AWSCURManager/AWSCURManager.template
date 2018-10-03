@@ -46,6 +46,12 @@
             "AllowedPattern" : "^[a-z](?:(?:\\.(?!\\.))|-|[a-zA-Z0-9]){1,61}[a-z]$",
             "ConstraintDescription" : "Member must satisfy regular expression pattern: ^[a-z](?:(?:\\.(?!\\.))|-|[a-zA-Z0-9]){1,61}[a-z]$"
         },
+		"GlueJobName" : {
+			"Description" : "The name of the Glue Job that will run after the files are moved. Leave this blank if you don't want to run a glue job.",
+			"Type" : "String",
+			"Default" : ""
+		},
+
         "LogRetentionInDays" : {
             "Type" : "Number",
             "Description" : "The number of days to retain the CloudWatch Logs for the function. If this is set to 0, it will be infinite retention.",
@@ -100,6 +106,7 @@
         }
     },
 
+
 	"Mappings" : {
 		"Internal" : {
 			"Lambda" : {
@@ -137,15 +144,7 @@
 						"Ref" : "ReportDeliveryS3Bucket"
 					},
 					"S3Prefix"    : {
-						"Fn::Join" : [
-							"",
-							[
-								{
-									"Ref" : "AWS::AccountId"
-								},
-								"/"
-							]
-						]
+						"Fn::Sub" : "${AWS::AccountId}/"						
 					},
 					"S3Region"      : {
 						"Ref" : "AWS::Region"
@@ -264,7 +263,7 @@
 								"StringNotLike" : {
 									"aws:UserId" : [
 										{
-											"Fn::Sub" : "${LambdaCURCleanupRole.RoleId}:*"
+											"Fn::Sub" : "${LambdaCURRole.RoleId}:*"
 										}
 									]
 								}
@@ -292,7 +291,7 @@
             }
         },
 
-        "LambdaCURCleanupRole" : {
+        "LambdaCURRole" : {
             "Type" : "AWS::IAM::Role",
             "Properties" : {
                 "AssumeRolePolicyDocument" : {
@@ -346,7 +345,7 @@
                 },
                 "Roles"          : [
                     {
-                        "Ref" : "LambdaCURCleanupRole"
+                        "Ref" : "LambdaCURRole"
                     }
                 ]
             }
@@ -371,7 +370,7 @@
                 },
                 "Roles"          : [
                     {
-                        "Ref" : "LambdaCURCleanupRole"
+                        "Ref" : "LambdaCURRole"
                     }
                 ]
             }
@@ -399,7 +398,7 @@
                 },
                 "Roles"          : [
                     {
-                        "Ref" : "LambdaCURCleanupRole"
+                        "Ref" : "LambdaCURRole"
                     }
                 ]
             }
@@ -449,27 +448,50 @@
                 },
                 "Roles"          : [
                     {
-                        "Ref" : "LambdaCURCleanupRole"
+                        "Ref" : "LambdaCURRole"
+                    }
+                ]
+            }
+        },
+		"LambdaGluePolicy"      : {
+            "Type" : "AWS::IAM::Policy",
+            "Properties" : {
+                "PolicyName" : "LambdaGluePolicy",
+                "PolicyDocument" : {
+                    "Version" : "2012-10-17",
+                    "Statement" : [
+                        {
+                            "Effect" : "Allow",
+                            "Action" : [
+                                "glue:StartJobRun"
+                            ],
+                            "Resource" : "*"
+                        }
+                    ]
+                },
+                "Roles"          : [
+                    {
+                        "Ref" : "LambdaCURRole"
                     }
                 ]
             }
         },
 
-        "LambdaFunction"      : {
+		"LambdaFunction"      : {
             "Type" : "AWS::Serverless::Function",
             "Properties" : {
 				"FunctionName" : {
 					"Fn::FindInMap" : [ "Internal", "Lambda", "FunctionName" ]
 				},
-				"Description" : "Moves the most recent CUR into a new bucket and deletes the older reports for that month in the new bucket.",
-                "Handler" : "CURManager::BAMCIS.LambdaFunctions.CURManager.Entrypoint::Exec",
+				"Description" : "Reads the updated manifest file and moves the new report files to the destination bucket.",
+                "Handler" : "AWSCURManager::BAMCIS.LambdaFunctions.AWSCURManager.Entrypoint::Exec",
                 "Runtime" : "dotnetcore2.1",
                 "CodeUri" : "",
                 "MemorySize" : 256,
                 "Timeout"    : 30,
                 "Role"       : {
                     "Fn::GetAtt" : [
-                        "LambdaCURCleanupRole",
+                        "LambdaCURRole",
                         "Arn"
                     ]
                 },
@@ -488,6 +510,9 @@
 						},
 						"DESTINATION_S3_BUCKET" : {
 							"Ref" : "ReportRepositoryBucketName"
+						},
+						"GLUE_JOB_NAME" : {
+							"Ref" : "GlueJobName"
 						}
 					 }
 				},
@@ -499,15 +524,22 @@
 							"Ref" : "ReportDeliveryS3Bucket"
 						 },
 						 "Events" : [
-							"s3:ObjectCreated:*"
+							"s3:ObjectCreated:Put",
+							"s3:ObjectCreated:Post"
 						 ],
 						 "Filter" : {
 							"S3Key" : {
 							   "Rules" : [
 								{
+								  "Name" : "prefix",
+								  "Value" : {
+									"Fn::Sub" : "${AWS::AccountId}/${ReportName}/20"
+								  }
+								},
+								{
 								  "Name" : "suffix",
 								  "Value" : {
-									"Fn::FindInMap" : ["Compression", { "Ref" : "ReportCompression" }, "Extension" ]
+									"Fn::Sub" : "01/${ReportName}-Manifest.json"
 								  }
 								}
 							   ]
@@ -517,7 +549,9 @@
                     }
                 },
 				"Tags"       : {
-                    "Name" : "CURUpdater",
+                    "Name" : {
+						"Fn::FindInMap" : [ "Internal", "Lambda", "FunctionName" ]
+					},
                     "Environment" : {
                         "Ref" : "EnvironmentTag"
                     },
@@ -558,6 +592,8 @@
             }
         }
     },
+
+
     "Outputs"                  : {
     }
 }
