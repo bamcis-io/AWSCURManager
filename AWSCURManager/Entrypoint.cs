@@ -50,6 +50,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         private static Regex _ExtensionRegex = new Regex(@"(\.csv(?:\.gz|\.zip)?)$");
         private static string _DestinationBucket;
         private static string _GlueJobName;
+        private static string _GlueDatabaseName;
 
         #endregion
 
@@ -66,6 +67,8 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             _DestinationBucket = Environment.GetEnvironmentVariable("DESTINATION_S3_BUCKET");
             _GlueJobName = Environment.GetEnvironmentVariable("GLUE_JOB_NAME");
             _SNSTopic = Environment.GetEnvironmentVariable("SNS_TOPIC");
+            _GlueDatabaseName = Environment.GetEnvironmentVariable("DATABASE_NAME");
+
         }
 
         /// <summary>
@@ -99,7 +102,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             }
 
             // Keep track of each copy task in this list
-            List<Task<bool>> Tasks = new List<Task<bool>>();
+            List<Task<Manifest>> Tasks = new List<Task<Manifest>>();
 
             // Process each event record
             foreach (S3EventNotificationRecord Item in s3Event.Records)
@@ -115,29 +118,35 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             }
 
             // Process each copy task as it finishes
-            foreach (Task<bool> Task in Tasks.Interleaved())
+            foreach (Task<Manifest> Task in Tasks.Interleaved())
             {
                 try
                 {
-                    bool Result = await Task;
+                    Manifest Result = await Task;
 
-                    if (Result == false)
+                    if (Result == null)
                     {
                         string Message = "A task did not return successfully";
                         context.LogWarning(Message);
                         await SNSNotify(Message, context);
+                    }
+                    else
+                    {
+                        // Create or update the glue data catalog table
+                        // for this CUR
+                        await CreateOrUpdateGlueTable(Result, context);
+
+                        // If provided, run a glue job
+                        await RunGlueJob(Result.BillingPeriod.Start.ToString("yyyy-MM-dd"), context);
                     }
                 }
                 catch (Exception e)
                 {
                     string Message = "A process item async task failed with an exception.";
                     context.LogError(Message, e);
-                    await SNSNotify(Message, context);
+                    await SNSNotify(Message + $" {e.Message}", context);
                 }
             }
-
-            // If provided, run a glue job
-            await RunGlueStep(context);
 
             context.LogInfo("Function completed.");
         }
@@ -254,21 +263,175 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         #region Private Methods
 
         /// <summary>
+        /// Creates or updates a glue table for the new CUR files. This makes sure any changes in the columns are captured
+        /// and applied to the table. This will end up creating a new table for each billing period.
+        /// </summary>
+        /// <param name="manifest"></param>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        private static async Task CreateOrUpdateGlueTable(Manifest manifest, ILambdaContext context)
+        {
+            if (String.IsNullOrEmpty(_GlueDatabaseName))
+            {
+                string Message = "No Glue database name defined, cannot create a table.";
+                context.LogWarning(Message);
+                await SNSNotify(Message, context);
+                return;
+            }
+
+            string Date = manifest.BillingPeriod.Start.ToString("yyyy-MM-dd");
+
+            // The updated table input for this particular CUR
+            TableInput TblInput = new TableInput()
+            {
+                Description = Date,
+                Name = Date,
+                TableType = "EXTERNAL_TABLE",
+                Parameters = new Dictionary<string, string>()
+                {
+                    { "EXTERNAL", "TRUE" },
+                    { "skip.header.line.count", "1" },
+                    { "columnsOrdered", "true" },
+                    { "compressionType", manifest.Compression.ToString().ToLower() },
+                    { "classification", "csv" }
+                },
+                StorageDescriptor = new StorageDescriptor()
+                {
+                    Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = $"{x.Category}/{x.Name}", Type = "string" }).ToList(),
+                    InputFormat = "org.apache.hadoop.mapred.TextInputFormat",
+                    OutputFormat = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+                    Location = $"s3://{_DestinationBucket}/accountid={manifest.Account}/billingperiod={Date}",
+                    SerdeInfo = new SerDeInfo()
+                    {
+                        Name = "OpenCSVSerde",
+                        SerializationLibrary = "org.apache.hadoop.hive.serde2.OpenCSVSerde",
+                        Parameters = new Dictionary<string, string>()
+                            {
+                                { "escapeChar", "\\" },
+                                { "quoteChar", "\"" },
+                                { "separatorChar", "," }
+                            }
+                    }
+                }
+            };
+
+            // Make sure the database exists
+            GetDatabaseRequest GetDb = new GetDatabaseRequest()
+            {
+                Name = _GlueDatabaseName
+            };
+
+            try
+            {
+                await _GlueClient.GetDatabaseAsync(GetDb);
+                context.LogInfo($"Database {_GlueDatabaseName} already exists.");
+            }
+            catch (EntityNotFoundException)
+            {
+                try
+                {
+                    CreateDatabaseRequest DbRequest = new CreateDatabaseRequest()
+                    {
+                        DatabaseInput = new DatabaseInput()
+                        {
+                            Name = _GlueDatabaseName
+                        }
+                    };
+
+                    CreateDatabaseResponse Response = await _GlueClient.CreateDatabaseAsync(DbRequest);
+
+                    if (Response.HttpStatusCode == HttpStatusCode.OK)
+                    {
+                        context.LogInfo($"Successfully CREATED database {_GlueDatabaseName}.");
+                    }
+                    else
+                    {
+                        context.LogError($"Failed to CREATE database with status code {(int)Response.HttpStatusCode}.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    string Message = $"Failed to create the database {_GlueDatabaseName}.";
+                    context.LogError(Message, ex);
+                    await SNSNotify(Message + $" {ex.Message}", context);
+                    return;
+                }
+            }
+
+            // Make sure the table exists
+            GetTableRequest GetTable = new GetTableRequest()
+            {
+                DatabaseName = _GlueDatabaseName,
+                Name = Date
+            };
+
+            try
+            {
+                GetTableResponse TableResponse = await _GlueClient.GetTableAsync(GetTable);
+
+                UpdateTableRequest UpdateReq = new UpdateTableRequest()
+                {
+                    TableInput = TblInput,
+                    DatabaseName = _GlueDatabaseName
+                };
+
+                UpdateTableResponse Response = await _GlueClient.UpdateTableAsync(UpdateReq);
+
+                if (Response.HttpStatusCode == HttpStatusCode.OK)
+                {
+                    context.LogInfo($"Successfully UPDATED table {TblInput.Name} in database {_GlueDatabaseName}.");
+                }
+                else
+                {
+                    string Message = $"Failed to UPDATE table with status code {(int)Response.HttpStatusCode}.";
+                    context.LogError(Message);
+                    await SNSNotify(Message, context);
+                }
+            }
+            catch (EntityNotFoundException) // This means the table does not exist
+            {
+                CreateTableRequest CreateReq = new CreateTableRequest()
+                {
+                    TableInput = TblInput,
+                    DatabaseName = _GlueDatabaseName
+                };
+
+                CreateTableResponse Response = await _GlueClient.CreateTableAsync(CreateReq);
+
+                if (Response.HttpStatusCode == HttpStatusCode.OK)
+                {
+                    context.LogInfo($"Successfully CREATED table {TblInput.Name} in database {_GlueDatabaseName}.");
+                }
+                else
+                {
+                    string Message = $"Failed to CREATE table with status code {(int)Response.HttpStatusCode}.";
+                    context.LogError(Message);
+                    await SNSNotify(Message, context);
+                }
+            }
+        }
+
+        /// <summary>
         /// If provided, runs a Glue job after the files have been copied
         /// </summary>
         /// <param name="context"></param>
         /// <returns></returns>
-        private static async Task RunGlueStep(ILambdaContext context)
+        private static async Task RunGlueJob(string table, ILambdaContext context)
         {
             if (!String.IsNullOrEmpty(_GlueJobName))
             {
-                context.LogInfo("Running glue job.");
+                context.LogInfo($"Running glue job on table {table} in database {_GlueDatabaseName}.");
                 try
                 {
                     StartJobRunRequest Request = new StartJobRunRequest()
                     {
                         JobName = _GlueJobName,
-                        Timeout = 1440 // 24 Hours          
+                        Timeout = 1440, // 24 Hours          
+                        Arguments = new Dictionary<string, string>()
+                        {
+                            { "--table", table },
+                            { "--database", _GlueDatabaseName }
+                        }
                     };
 
                     StartJobRunResponse Response = await _GlueClient.StartJobRunAsync(Request);
@@ -286,7 +449,9 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 }
                 catch (Exception e)
                 {
-                    context.LogError(e);
+                    string Message = "Failed to start Glue job.";
+                    context.LogError(Message, e);
+                    await SNSNotify(Message + $" {e.Message}", context);
                 }
             }
         }
@@ -334,7 +499,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         /// <param name="item"></param>
         /// <param name="context"></param>
         /// <returns></returns>
-        private static async Task<bool> ProcessItemAsync(S3EventNotificationRecord item, string destinationBucket, ILambdaContext context)
+        private static async Task<Manifest> ProcessItemAsync(S3EventNotificationRecord item, string destinationBucket, ILambdaContext context)
         {
             context.LogInfo(JsonConvert.SerializeObject(item));
 
@@ -344,7 +509,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 string Message = $"This Lambda function was triggered by a non ObjectCreated Put or Post event, {item.EventName}, for object {item.S3.Object.Key}; check the CloudFormation template configuration and S3 Event setup.";
                 context.LogWarning(Message);
                 await SNSNotify(Message, context);
-                return false;
+                return null;
             }
 
             // Get the manifest file contents
@@ -379,7 +544,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 string Message = $"No destination keys producted for s3://{Request.BucketName}/{Request.Key}";
                 context.LogWarning(Message);
                 await SNSNotify(Message, context);
-                return false;
+                return null;
             }
 
             // Get the report Guid the destination path prefix
@@ -397,7 +562,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             {
                 context.LogError(e);
                 await SNSNotify($"{e.Message}\n{e.StackTrace}", context);
-                return false;
+                return null;
             }
 
             // Delete the old CUR files in the destination bucket
@@ -410,7 +575,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                     string Message = $"Unable to delete all objects, expected to delete {KeysToDelete.Count} but only deleted {DeletedCount}.";
                     context.LogError(Message);
                     await SNSNotify(Message, context);
-                    return false;
+                    return null;
                 }
                 else
                 {
@@ -422,7 +587,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 string Message = "Unable to delete all old CUR files.";
                 context.LogError(Message, e);
                 await SNSNotify(Message, context);
-                return false;
+                return null;
             }
 
             List<Task<CopyResponse>> CopyTasks = new List<Task<CopyResponse>>();
@@ -440,7 +605,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                     string Message = $"Failed to add a copy object task to the queue for s3://{item.S3.Bucket.Name}/{KeySet.Key} to s3://{_DestinationBucket}/{KeySet.Value}.";
                     context.LogError(Message, e);
                     await SNSNotify(Message, context);
-                    return false;
+                    return null;
                 }
             }
 
@@ -456,7 +621,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                         string Message = $"Failed to copy s3://{Result.SourceBucket}/{Result.SourceKey} to s3://{Result.DestinationBucket}/{Result.DestinationKey}.";
                         context.LogError(Message, Result.Exception);
                         await SNSNotify(Message, context);
-                        return false;
+                        return null;
                     }
                     else
                     {
@@ -465,7 +630,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                             string Message = $"Failed to copy s3://{Result.SourceBucket}/{Result.SourceKey} to s3://{Result.DestinationBucket}/{Result.DestinationKey} with http code {(int)Result.Response.HttpStatusCode}.";
                             context.LogError(Message);
                             await SNSNotify(Message, context);
-                            return false;
+                            return null;
                         }
                         else
                         {
@@ -478,11 +643,11 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                     string Message = $"Internal error processing the copy async task.";
                     context.LogError(Message, e);
                     await SNSNotify(Message, context);
-                    return false;
+                    return null;
                 }
             }
 
-            return true;
+            return ManifestFile;
         }
 
         /// <summary>

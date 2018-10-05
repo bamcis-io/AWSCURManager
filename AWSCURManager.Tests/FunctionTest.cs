@@ -1,13 +1,16 @@
 using Amazon;
+using Amazon.Glue;
+using Amazon.Glue.Model;
 using Amazon.Lambda.S3Events;
 using Amazon.Lambda.TestUtilities;
 using Amazon.Runtime;
 using Amazon.Runtime.CredentialManagement;
-using Amazon.S3;
 using BAMCIS.LambaFunctions.AWSCURManager.ReportManifest;
 using BAMCIS.LambdaFunctions.AWSCURManager;
 using Newtonsoft.Json;
 using System;
+using System.Collections.Generic;
+using System.Net;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -16,12 +19,22 @@ namespace CURUpdater.Tests
     public class FunctionTest
     {
         private static string User = Environment.UserName; // UPDATE THIS VARIABLE
-        private static string AccountNumber = "252486826203";
+        private static string AccountNumber = "123456789012";
         private static string SourceBucket = $"{User}-billing-delivery";
         private static string DestinationBucket = $"{User}-billing-repo";
         private static string SourceKey = $"{AccountNumber}/GzipDetailedDaily/20181001-20181101/eb3c690f-eeaa-4781-b701-4fd32f8ab19f/GzipDetailedDaily-1.csv.gz";
         private static string SourceManifestKey = $"{AccountNumber}/GzipDetailedDaily/20181001-20181101/GzipDetailedDaily-Manifest.json";
         private static string ProfileName = $"{User}-dev";
+        private static SharedCredentialsFile CredsFile = new SharedCredentialsFile();
+        private static AWSCredentials Creds;
+
+        static FunctionTest()
+        {
+            AWSConfigs.AWSProfilesLocation = $"{Environment.GetEnvironmentVariable("UserProfile")}\\.aws\\credentials";
+            AWSConfigs.AWSProfileName = ProfileName;
+            CredsFile.TryGetProfile(ProfileName, out CredentialProfile Profile);
+            Creds = AWSCredentialsFactory.GetAWSCredentials(Profile, CredsFile);
+        }
 
         public FunctionTest()
         {
@@ -71,15 +84,6 @@ namespace CURUpdater.Tests
   ]
 }}
 ";
-
-            AWSConfigs.AWSProfilesLocation = $"{Environment.GetEnvironmentVariable("UserProfile")}\\.aws\\credentials";
-            AWSConfigs.AWSProfileName = ProfileName;
-            AmazonS3Config Config = new AmazonS3Config();
-            SharedCredentialsFile CredsFile = new SharedCredentialsFile();
-            CredsFile.TryGetProfile(ProfileName, out CredentialProfile Profile);
-
-            AWSCredentials Creds = AWSCredentialsFactory.GetAWSCredentials(Profile, CredsFile);
-
             TestLambdaLogger TestLogger = new TestLambdaLogger();
             TestClientContext ClientContext = new TestClientContext();
 
@@ -103,7 +107,7 @@ namespace CURUpdater.Tests
 
             // ACT
 
-            await Entry.Exec2(Event, Context);
+            await Entry.ProcessIndividualCUR(Event, Context);
 
             // ASSERT
 
@@ -154,15 +158,6 @@ namespace CURUpdater.Tests
   ]
 }}
 ";
-
-            AWSConfigs.AWSProfilesLocation = $"{Environment.GetEnvironmentVariable("UserProfile")}\\.aws\\credentials";
-            AWSConfigs.AWSProfileName = ProfileName;
-            AmazonS3Config Config = new AmazonS3Config();
-            SharedCredentialsFile CredsFile = new SharedCredentialsFile();
-            CredsFile.TryGetProfile(ProfileName, out CredentialProfile Profile);
-
-            AWSCredentials Creds = AWSCredentialsFactory.GetAWSCredentials(Profile, CredsFile);
-
             TestLambdaLogger TestLogger = new TestLambdaLogger();
             TestClientContext ClientContext = new TestClientContext();
 
@@ -201,13 +196,56 @@ namespace CURUpdater.Tests
 
             // ACT
 
-            DateTime DT = JsonConvert.DeserializeObject<DateTime>(Value, new ManifestDateTimeConverter() );
+            DateTime DT = JsonConvert.DeserializeObject<DateTime>(Value, new ManifestDateTimeConverter());
 
             // ASSERT
 
             Assert.Equal(new DateTime(2018, 10, 01, 0, 0, 0, DateTimeKind.Utc), DT);
             Assert.Equal(Value, JsonConvert.SerializeObject(DT, new ManifestDateTimeConverter()));
 
+        }
+
+        [Fact]
+        public async Task TestNonExistentGlueTable()
+        {
+            // ARRANGE
+            IAmazonGlue GlueClient = new AmazonGlueClient(Creds);
+
+            GetTableRequest Request = new GetTableRequest()
+            {
+                DatabaseName = "test",
+                Name = "test"
+            };
+
+            // ACT / ASSERT
+            await Assert.ThrowsAsync<EntityNotFoundException>(async () => await GlueClient.GetTableAsync(Request));
+        }
+
+        [Fact]
+        public async Task TestLaunchJob()
+        {
+            //ARRANGE
+
+            StartJobRunRequest Request = new StartJobRunRequest()
+            {
+                JobName = "CUR File ETL",
+                Timeout = 1440, // 24 Hours          
+                Arguments = new Dictionary<string, string>()
+                        {
+                            { "--table", "2018-10-01" },
+                            { "--database", "billingdata" }
+                        }
+            };
+
+            IAmazonGlue GlueClient = new AmazonGlueClient(Creds);
+
+            // ACT
+            StartJobRunResponse Response = await GlueClient.StartJobRunAsync(Request);
+
+            // ASSERT
+
+            Assert.NotNull(Response);
+            Assert.Equal(HttpStatusCode.OK, Response.HttpStatusCode);           
         }
     }
 }

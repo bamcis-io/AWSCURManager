@@ -31,7 +31,7 @@ namespace BAMCIS.LambaFunctions.AWSCURManager.ReportManifest
 
         public IEnumerable<string> ReportKeys { get; }
 
-        public IEnumerable<string> AdditionalArtifactKeys { get; }
+        public IEnumerable<AdditionalArtifactKey> AdditionalArtifactKeys { get; }
 
         #endregion
 
@@ -65,7 +65,7 @@ namespace BAMCIS.LambaFunctions.AWSCURManager.ReportManifest
             BillingPeriod billingPeriod,
             string bucket,
             IEnumerable<string> reportKeys,
-            IEnumerable<string> additionalArtifactKeys
+            IEnumerable<AdditionalArtifactKey> additionalArtifactKeys
             )
         {
             this.AssemblyId = assemblyId;
