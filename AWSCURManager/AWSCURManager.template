@@ -10,14 +10,14 @@
 			"Type" : "String",
 			"Default" : "arn:aws:lambda:us-east-1:252486826203:function:CostAndUsageReportResource"
 		},
-		"Frequency"    : {
-            "Description" : "The frequency the reports are delivered.",
+		"Granularity"    : {
+            "Description" : "The granularity of the report line items. For hourly there is a line item per hour for each resource. For daily, there is 1 line item per day for each resource with a usage quantity that accounts for each hour used.",
             "Type"        : "String",
             "AllowedValues" : [
                 "Hourly",
                 "Daily"
             ],
-            "Default"       : "Daily"
+            "Default"       : "Hourly"
         },
 		"ReportCompression" : {
 			"Type" : "String",
@@ -155,7 +155,7 @@
 						"Ref" : "AWS::Region"
 					},
 					"TimeUnit"    : {
-						"Ref" : "Frequency"
+						"Ref" : "Granularity"
 					}
 				}
 			},
