@@ -56,6 +56,11 @@
 			"Type" : "String",
 			"Default" : "billingdata"
 		},
+		"GlueJobDestinationBucket" : {
+			"Description" : "The S3 Bucket name where the Glue ETL Job will write out the job results. If this is blank, the job won't be run.",
+			"Type" : "String",
+			"Default" : ""
+		},
 
         "LogRetentionInDays" : {
             "Type" : "Number",
@@ -526,6 +531,9 @@
 						},
 						"DATABASE_NAME": {
 							"Ref" : "GlueDatabaseName"
+						},
+						"GLUE_DESTINATION_BUCKET" : {
+							"Ref" : "GlueJobDestinationBucket"
 						}
 					 }
 				},

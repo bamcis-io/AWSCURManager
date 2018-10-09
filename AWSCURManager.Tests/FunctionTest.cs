@@ -19,7 +19,7 @@ namespace CURUpdater.Tests
     public class FunctionTest
     {
         private static string User = Environment.UserName; // UPDATE THIS VARIABLE
-        private static string AccountNumber = "123456789012";
+        private static string AccountNumber = "123456789012"; // UPDATE THIS TO YOUR ACCOUNT NUMBER
         private static string SourceBucket = $"{User}-billing-delivery";
         private static string DestinationBucket = $"{User}-billing-repo";
         private static string SourceKey = $"{AccountNumber}/GzipDetailedDaily/20181001-20181101/eb3c690f-eeaa-4781-b701-4fd32f8ab19f/GzipDetailedDaily-1.csv.gz";
@@ -233,7 +233,8 @@ namespace CURUpdater.Tests
                 Arguments = new Dictionary<string, string>()
                         {
                             { "--table", "2018-10-01" },
-                            { "--database", "billingdata" }
+                            { "--database", "billingdata" },
+                            { "--destination_bucket", $"{User}-billing-formatted" }
                         }
             };
 

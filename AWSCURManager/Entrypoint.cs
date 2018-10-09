@@ -51,6 +51,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         private static string _DestinationBucket;
         private static string _GlueJobName;
         private static string _GlueDatabaseName;
+        private static string _GlueDestinationBucket;
 
         #endregion
 
@@ -418,7 +419,12 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         /// <returns></returns>
         private static async Task RunGlueJob(string table, ILambdaContext context)
         {
-            if (!String.IsNullOrEmpty(_GlueJobName))
+            if (String.IsNullOrEmpty(table))
+            {
+                throw new ArgumentNullException("table");
+            }
+
+            if (!String.IsNullOrEmpty(_GlueJobName) && !String.IsNullOrEmpty(_GlueDestinationBucket))
             {
                 context.LogInfo($"Running glue job on table {table} in database {_GlueDatabaseName}.");
                 try
@@ -430,7 +436,8 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                         Arguments = new Dictionary<string, string>()
                         {
                             { "--table", table },
-                            { "--database", _GlueDatabaseName }
+                            { "--database", _GlueDatabaseName },
+                            { "--destination_bucket", _GlueDestinationBucket }
                         }
                     };
 
