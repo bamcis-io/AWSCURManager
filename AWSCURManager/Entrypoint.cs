@@ -69,7 +69,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             _GlueJobName = Environment.GetEnvironmentVariable("GLUE_JOB_NAME");
             _SNSTopic = Environment.GetEnvironmentVariable("SNS_TOPIC");
             _GlueDatabaseName = Environment.GetEnvironmentVariable("DATABASE_NAME");
-
+            _GlueDestinationBucket = Environment.GetEnvironmentVariable("GLUE_DESTINATION_BUCKET");
         }
 
         /// <summary>
@@ -460,6 +460,12 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                     context.LogError(Message, e);
                     await SNSNotify(Message + $" {e.Message}", context);
                 }
+            }
+            else
+            {
+                string Message = "Either the Glue job name or destination bucket for the job was not provided as an environment variable. Not running job.";
+                context.LogWarning(Message);
+                await SNSNotify(Message, context);
             }
         }
 
