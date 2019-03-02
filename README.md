@@ -41,6 +41,9 @@ running this.
 
 ## Revision History
 
+### 2.0.2
+Fixed column type for csv files, all types are now string.
+
 ### 2.0.1
 Bug fix for the column names when the CUR is is parquet format.
 
