@@ -41,6 +41,9 @@ running this.
 
 ## Revision History
 
+### 2.0.1
+Bug fix for the column names when the CUR is is parquet format.
+
 ### 2.0.0
 The application now uses the same file name as the source object and overwrites the files each time it runs. This removes the need to list and delete all of the objects in the destination bucket under the same prefix. It also adds the new `type` information provided in the manifest file so that the Glue tables are created with the correct data types.
 

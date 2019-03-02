@@ -215,7 +215,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
 
                         Descriptor = new StorageDescriptor()
                         {
-                            Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = $"{x.Category}/{x.Name}", Type = (!String.IsNullOrEmpty(x.Type) ? x.Type : "string") }).ToList(),
+                            Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = $"{x.Category}/{x.Name}", Type = (!String.IsNullOrEmpty(x.Type) ? x.Type.ToLower() : "string") }).ToList(),
                             InputFormat = "org.apache.hadoop.mapred.TextInputFormat",
                             OutputFormat = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
                             Location = $"s3://{_DestinationBucket}/{GetDestinationPrefix(manifest)}",
@@ -245,7 +245,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
 
                         Descriptor = new StorageDescriptor()
                         {
-                            Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = $"{x.Category}/{x.Name}", Type = (!String.IsNullOrEmpty(x.Type) ? x.Type : "string") }).ToList(),
+                            Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = x.Name, Type = (!String.IsNullOrEmpty(x.Type) ? x.Type.ToLower() : "string") }).ToList(),
                             InputFormat = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
                             OutputFormat = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
                             Location = $"s3://{_DestinationBucket}/{GetDestinationPrefix(manifest)}",
