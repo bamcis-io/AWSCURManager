@@ -33,9 +33,6 @@ namespace CURUpdater.Tests
         private static string _YearMonthDay = "(20[0-9]{2})((?:0[1-9]|1[0-2]))((?:0[1-9]|[1-2][0-9]|3[0-1]))";
         private static string _Guid = "{?[0-9a-f]{8}-?[0-9a-f]{4}-?4[0-9a-f]{3}-?[0-9a-f]{4}-?[0-9a-f]{12}}?";
         private static Regex _DateAndGuidRegex = new Regex($"{_YearMonthDay}-{_YearMonthDay}\\/({_Guid})", RegexOptions.IgnoreCase);
-        private static Regex _CsvExtensionRegex = new Regex(@"(\.csv(?:\.gz|\.zip)?)$");
-        private static Regex _ParquetExtensionRegex = new Regex(@"((?:\.snappy)?\.parquet)$");
-        private static Regex _ParquetPathRegex = new Regex(@"year=(20[0-9]{2})\/month=((?:0?[1-9]|1[0-2]))", RegexOptions.IgnoreCase);
 
         static FunctionTest()
         {
@@ -182,38 +179,6 @@ namespace CURUpdater.Tests
 
             Assert.NotNull(Response);
             Assert.Equal(HttpStatusCode.OK, Response.HttpStatusCode);           
-        }
-
-        [Fact]
-        public void CsvKeyRegexTest()
-        {
-            // ARRANGE
-
-            // ACT 
-            Match Result = _DateAndGuidRegex.Match(SourceKey);
-
-            // ASSERT
-            Assert.True(Result.Success);
-            Assert.Equal("2018", Result.Groups[1].Value);
-            Assert.Equal("10", Result.Groups[2].Value);
-            Assert.Equal("01", Result.Groups[3].Value);
-            Assert.Equal("2018", Result.Groups[4].Value);
-            Assert.Equal("11", Result.Groups[5].Value);
-            Assert.Equal("01", Result.Groups[6].Value);
-        }
-
-        [Fact]
-        public void ParquetKeyRegexTest()
-        {
-            // ARRANGE
-
-            // ACT
-            Match Result = _ParquetPathRegex.Match(ParquetKey);
-
-            // ASSERT
-            Assert.True(Result.Success);
-            Assert.Equal("2019", Result.Groups[1].Value);
-            Assert.Equal("2", Result.Groups[2].Value);
         }
     }
 }
