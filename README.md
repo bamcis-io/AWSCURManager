@@ -12,11 +12,11 @@ The application builds creates a Cost and Usage Report resource and the supporti
 
 Although the CUR service now provides the ability to overwrite the reports instead of receiving hourly or daily differential reports, which is what this application was originally built to overcome, this application provides the flexibility to use an alternate S3 prefix path style. By default, destination bucket uses the following S3 prefix pattern to help organize and separate the data:
 
-    s3://BucketName/accountid=0123456789012/billingperiod=2019-01-01"
+    s3://BucketName/accountid=0123456789012/billingperiod=2019-01-01
 
 But you can also use
 
-    s3://BucketName/accountid=0123456789012/year=2019/month=1"
+    s3://BucketName/accountid=0123456789012/year=2019/month=1
 
 Additionally, you can supply a Glue database name. If the database name is defined, the Lambda function will create a new table for each month. The reason that a new table is created is that each CUR is not guaranteed to use the same schema, since the schema for each file is defined in the manifest delivered with the CUR. You need to have the table created in Glue before you can run any kind of ETL operations to normalize the data later. If the table already exists, it is updated with the new schema (which may not have changed) defined in the manifest file.
 
