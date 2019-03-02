@@ -5,7 +5,6 @@ An AWS Serverless Application that manages delivered CURs to enable easier analy
 - [Usage](#usage)
 - [Summary of Resources](#summary-of-resources)
 - [Dependencies](#dependencies)
-- [TODO](#todo)
 - [Revision History](#revision-history)
 
 ## Usage
@@ -39,9 +38,6 @@ This serverless application uses a Lambda function that deploys the Cost and Usa
 app can be found [here](https://github.com/bamcis-io/AWSCostAndUsageReport). You will need to deploy that serverless app
 in the same region you want to create the management pipeline in (i.e. the same region you deploy this serverless app) before
 running this. 
-
-## TODO
-Because the CUR service has released the capability to overwrite
 
 ## Revision History
 
