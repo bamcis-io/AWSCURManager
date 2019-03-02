@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using static Amazon.S3.Util.S3EventNotification;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
+using System.Threading;
 
 // Assembly attribute to enable the Lambda function's JSON input to be converted into a .NET class.
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.Json.JsonSerializer))]
@@ -47,11 +48,12 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         // 6 = Day
         // 7 = Guid
         private static Regex _DateAndGuidRegex = new Regex($"{_YearMonthDay}-{_YearMonthDay}/({_Guid})", RegexOptions.IgnoreCase);
-        private static Regex _ExtensionRegex = new Regex(@"(\.csv(?:\.gz|\.zip)?)$");
+
         private static string _DestinationBucket;
         private static string _GlueJobName;
         private static string _GlueDatabaseName;
         private static string _GlueDestinationBucket;
+        private static string _OutputPathFormat;
 
         #endregion
 
@@ -70,6 +72,15 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             _SNSTopic = Environment.GetEnvironmentVariable("SNS_TOPIC");
             _GlueDatabaseName = Environment.GetEnvironmentVariable("DATABASE_NAME");
             _GlueDestinationBucket = Environment.GetEnvironmentVariable("GLUE_DESTINATION_BUCKET");
+            _OutputPathFormat = Environment.GetEnvironmentVariable("OUTPUT_PATH_FORMAT");
+
+            // Use ? in case output path format is null
+            _OutputPathFormat = _OutputPathFormat?.ToLower();
+
+            if (_OutputPathFormat != "billingperiod" && _OutputPathFormat != "yearmonth")
+            {
+                _OutputPathFormat = "billingperiod";
+            }
         }
 
         /// <summary>
@@ -135,10 +146,19 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                     {
                         // Create or update the glue data catalog table
                         // for this CUR
-                        await CreateOrUpdateGlueTable(Result, context);
+                        string TableName = await CreateOrUpdateGlueTable(Result, context);
 
-                        // If provided, run a glue job
-                        await RunGlueJob(Result.BillingPeriod.Start.ToString("yyyy-MM-dd"), context);
+                        if (!String.IsNullOrEmpty(TableName))
+                        {
+                            // If provided, run a glue job
+                            await RunGlueJob(TableName, context);
+                        }
+                        else
+                        {
+                            string Message = "The CreateOrUpdateGlueTable method returned an empty string for the table name, indicating either the DB or Table could not be created.";
+                            context.LogWarning(Message);
+                            await SNSNotify(Message, context);
+                        }
                     }
                 }
                 catch (Exception e)
@@ -152,113 +172,6 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             context.LogInfo("Function completed.");
         }
 
-        /// <summary>
-        /// Deletes all S3 files for the same billing period that are already in S3 except for the
-        /// object that caused this function to be run
-        /// </summary>
-        /// <param name="s3Event"></param>
-        /// <param name="context"></param>
-        /// <returns></returns>
-        public async Task ProcessIndividualCUR(S3Event s3Event, ILambdaContext context)
-        {
-            context.LogInfo($"Recevied S3 Event : {JsonConvert.SerializeObject(s3Event)}");
-
-            if (String.IsNullOrEmpty(_DestinationBucket))
-            {
-                context.LogError("The environment variable DESTINATION_S3_BUCKET was not set.");
-                return;
-            }
-
-            foreach (S3EventNotificationRecord Item in s3Event.Records)
-            {
-                context.LogInfo(JsonConvert.SerializeObject(Item));
-
-                string Bucket = Item.S3.Bucket.Name;
-                string Key = Item.S3.Object.Key;
-
-                // Make sure the event was when a new object was created
-                if (Item.EventName == EventType.ObjectCreatedPut || Item.EventName == EventType.ObjectCreatedPost)
-                {
-                    Match ExtensionMatch = _ExtensionRegex.Match(Key);
-
-                    // Make sure the object is a csv, csv.gz or csv.zip file
-                    if (ExtensionMatch.Success)
-                    {
-                        // Extract the date section of the key prefix
-                        Match DateGuidMatch = _DateAndGuidRegex.Match(Key);
-
-                        if (DateGuidMatch.Success)
-                        {
-                            string Guid = DateGuidMatch.Groups[7].Value;
-
-                            string AccountId = context.InvokedFunctionArn.Split(":")[4];
-
-                            // accountid=123456789012/date=20181001/eb3c690f-eeaa-4781-b701-4fd32f8ab19f.csv.gz
-                            // This leaves a string.Format option in case the CUR report is chunked
-                            string[] KeyParts = Path.GetFileNameWithoutExtension(Key).Split("-");
-
-                            string ChunkId = "";
-
-                            if (KeyParts.Length > 1)
-                            {
-                                // Get file name without extension may only truncate off the .gz part from
-                                // .csv.gz or .csv.zip, so we know the actual chunk id will be the 0 element
-                                ChunkId = $"-{KeyParts[1].Split(".")[0]}";
-                            }
-
-                            string DestinationKey = $"accountid={AccountId}/billingperiod={DateGuidMatch.Groups[1]}-{DateGuidMatch.Groups[2]}-{DateGuidMatch.Groups[3]}/{Guid}{ChunkId}{ExtensionMatch.Groups[1]}";
-
-                            List<KeyVersion> Keys = await ListAllObjectsAsync(_DestinationBucket, x => x.Where(y => !Path.GetFileName(y.Key).StartsWith(Guid)), DestinationKey.Substring(0, DestinationKey.LastIndexOf("/")));
-
-                            try
-                            {
-                                int Count = await DeleteObjectsAsync(Keys, _DestinationBucket);
-                            }
-                            catch (Exception e)
-                            {
-                                context.LogError("Failed to delete all CUR files.", e);
-                                return;
-                            }
-
-                            // Copy this file into the new bucket with its new name
-                            try
-                            {
-                                context.LogInfo($"Copying CUR from s3://{Bucket}/{Key} to s3://{_DestinationBucket}/{DestinationKey}");
-
-                                CopyObjectRequest CopyRequest = new CopyObjectRequest()
-                                {
-                                    SourceBucket = Bucket,
-                                    SourceKey = Key,
-                                    DestinationBucket = _DestinationBucket,
-                                    DestinationKey = DestinationKey
-                                };
-
-                                CopyObjectResponse CopyResponse = await _S3Client.CopyOrMoveObjectAsync(CopyRequest);
-
-                                context.LogInfo("Successfully moved CUR file.");
-                            }
-                            catch (Exception e)
-                            {
-                                context.LogError($"Failed to move s3://{Bucket}/{Key}", e);
-                            }
-                        }
-                        else
-                        {
-                            context.LogWarning($"Did not find a Date string match in {Key}.");
-                        }
-                    }
-                    else
-                    {
-                        context.LogInfo($"Ignoring S3 file {Key}, did not match extension regex.");
-                    }
-                }
-                else
-                {
-                    context.LogWarning($"This Lambda function was triggered by a non ObjectCreated Put or Post event, {Item.EventName}, for object {Item.S3.Object.Key}; check the CloudFormation template configuration and S3 Event setup.");
-                }
-            }
-        }
-
         #endregion
 
         #region Private Methods
@@ -269,18 +182,92 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         /// </summary>
         /// <param name="manifest"></param>
         /// <param name="context"></param>
-        /// <returns></returns>
-        private static async Task CreateOrUpdateGlueTable(Manifest manifest, ILambdaContext context)
+        /// <returns>The table name</returns>
+        private static async Task<string> CreateOrUpdateGlueTable(Manifest manifest, ILambdaContext context)
         {
             if (String.IsNullOrEmpty(_GlueDatabaseName))
             {
                 string Message = "No Glue database name defined, cannot create a table.";
                 context.LogWarning(Message);
                 await SNSNotify(Message, context);
-                return;
+                return String.Empty;
             }
 
             string Date = manifest.BillingPeriod.Start.ToString("yyyy-MM-dd");
+
+            string Format = manifest.ContentType.ToLower().Substring(manifest.ContentType.LastIndexOf("/") + 1);
+
+            Dictionary<string, string> Parameters;
+            StorageDescriptor Descriptor;
+
+            switch (Format)
+            {
+                case "csv":
+                    {
+                        Parameters = new Dictionary<string, string>()
+                        {
+                            { "EXTERNAL", "TRUE" },
+                            { "skip.header.line.count", "1" },
+                            { "columnsOrdered", "true" },
+                            { "compressionType", manifest.Compression.ToString().ToLower() },
+                            { "classification", manifest.ContentType.ToLower().Substring(manifest.ContentType.LastIndexOf("/") + 1) }
+                        };
+
+                        Descriptor = new StorageDescriptor()
+                        {
+                            Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = $"{x.Category}/{x.Name}", Type = (!String.IsNullOrEmpty(x.Type) ? x.Type : "string") }).ToList(),
+                            InputFormat = "org.apache.hadoop.mapred.TextInputFormat",
+                            OutputFormat = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
+                            Location = $"s3://{_DestinationBucket}/{GetDestinationPrefix(manifest)}",
+                            SerdeInfo = new SerDeInfo()
+                            {
+                                Name = "OpenCSVSerde",
+                                SerializationLibrary = "org.apache.hadoop.hive.serde2.OpenCSVSerde",
+                                Parameters = new Dictionary<string, string>()
+                                {
+                                    { "escapeChar", "\\" },
+                                    { "quoteChar", "\"" },
+                                    { "separatorChar", "," }
+                                }
+                            }
+                        };
+
+                        break;
+                    }
+                case "parquet":
+                    {
+                        Parameters = new Dictionary<string, string>()
+                        {
+                            { "EXTERNAL", "TRUE" },
+                            { "compressionType", manifest.Compression.ToString().ToLower() },
+                            { "classification", manifest.ContentType.ToLower().Substring(manifest.ContentType.LastIndexOf("/") + 1) }
+                        };
+
+                        Descriptor = new StorageDescriptor()
+                        {
+                            Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = $"{x.Category}/{x.Name}", Type = (!String.IsNullOrEmpty(x.Type) ? x.Type : "string") }).ToList(),
+                            InputFormat = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
+                            OutputFormat = "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
+                            Location = $"s3://{_DestinationBucket}/{GetDestinationPrefix(manifest)}",
+                            SerdeInfo = new SerDeInfo()
+                            {
+                                Name = "ParquetHiveSerDe",
+                                SerializationLibrary = "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe",
+                                Parameters = new Dictionary<string, string>()
+                                {
+                                    { "serialization.format", "1" }
+                                }
+                            }
+                        };
+                        break;
+                    }
+                default:
+                    {
+                        string Message = $"Failed to create or update the database {_GlueDatabaseName} table. Unknown format type ${manifest.ContentType}.";
+                        await SNSNotify(Message, context);
+                        return String.Empty;
+                    }
+            }
 
             // The updated table input for this particular CUR
             TableInput TblInput = new TableInput()
@@ -288,32 +275,8 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 Description = Date,
                 Name = Date,
                 TableType = "EXTERNAL_TABLE",
-                Parameters = new Dictionary<string, string>()
-                {
-                    { "EXTERNAL", "TRUE" },
-                    { "skip.header.line.count", "1" },
-                    { "columnsOrdered", "true" },
-                    { "compressionType", manifest.Compression.ToString().ToLower() },
-                    { "classification", "csv" }
-                },
-                StorageDescriptor = new StorageDescriptor()
-                {
-                    Columns = manifest.Columns.Select(x => new Amazon.Glue.Model.Column() { Name = $"{x.Category}/{x.Name}", Type = "string" }).ToList(),
-                    InputFormat = "org.apache.hadoop.mapred.TextInputFormat",
-                    OutputFormat = "org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat",
-                    Location = $"s3://{_DestinationBucket}/accountid={manifest.Account}/billingperiod={Date}",
-                    SerdeInfo = new SerDeInfo()
-                    {
-                        Name = "OpenCSVSerde",
-                        SerializationLibrary = "org.apache.hadoop.hive.serde2.OpenCSVSerde",
-                        Parameters = new Dictionary<string, string>()
-                            {
-                                { "escapeChar", "\\" },
-                                { "quoteChar", "\"" },
-                                { "separatorChar", "," }
-                            }
-                    }
-                }
+                Parameters = Parameters,
+                StorageDescriptor = Descriptor
             };
 
             // Make sure the database exists
@@ -355,7 +318,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                     string Message = $"Failed to create the database {_GlueDatabaseName}.";
                     context.LogError(Message, ex);
                     await SNSNotify(Message + $" {ex.Message}", context);
-                    return;
+                    return String.Empty;
                 }
             }
 
@@ -381,12 +344,14 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 if (Response.HttpStatusCode == HttpStatusCode.OK)
                 {
                     context.LogInfo($"Successfully UPDATED table {TblInput.Name} in database {_GlueDatabaseName}.");
+                    return TblInput.Name;
                 }
                 else
                 {
                     string Message = $"Failed to UPDATE table with status code {(int)Response.HttpStatusCode}.";
                     context.LogError(Message);
                     await SNSNotify(Message, context);
+                    return String.Empty;
                 }
             }
             catch (EntityNotFoundException) // This means the table does not exist
@@ -402,12 +367,14 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 if (Response.HttpStatusCode == HttpStatusCode.OK)
                 {
                     context.LogInfo($"Successfully CREATED table {TblInput.Name} in database {_GlueDatabaseName}.");
+                    return TblInput.Name;
                 }
                 else
                 {
                     string Message = $"Failed to CREATE table with status code {(int)Response.HttpStatusCode}.";
                     context.LogError(Message);
                     await SNSNotify(Message, context);
+                    return String.Empty;
                 }
             }
         }
@@ -424,48 +391,60 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 throw new ArgumentNullException("table");
             }
 
-            if (!String.IsNullOrEmpty(_GlueJobName) && !String.IsNullOrEmpty(_GlueDestinationBucket))
+            if (String.IsNullOrEmpty(_GlueDatabaseName))
             {
-                context.LogInfo($"Running glue job on table {table} in database {_GlueDatabaseName}.");
-                try
-                {
-                    StartJobRunRequest Request = new StartJobRunRequest()
-                    {
-                        JobName = _GlueJobName,
-                        Timeout = 1440, // 24 Hours          
-                        Arguments = new Dictionary<string, string>()
-                        {
-                            { "--table", table },
-                            { "--database", _GlueDatabaseName },
-                            { "--destination_bucket", _GlueDestinationBucket }
-                        }
-                    };
-
-                    StartJobRunResponse Response = await _GlueClient.StartJobRunAsync(Request);
-
-                    if (Response.HttpStatusCode != HttpStatusCode.OK)
-                    {
-                        string Message = $"Failed to start job with status code ${(int)Response.HttpStatusCode}";
-                        context.LogError(Message);
-                        await SNSNotify(Message, context);
-                    }
-                    else
-                    {
-                        context.LogInfo($"Successfully started job {Response.JobRunId}");
-                    }
-                }
-                catch (Exception e)
-                {
-                    string Message = "Failed to start Glue job.";
-                    context.LogError(Message, e);
-                    await SNSNotify(Message + $" {e.Message}", context);
-                }
-            }
-            else
-            {
-                string Message = "Either the Glue job name or destination bucket for the job was not provided as an environment variable. Not running job.";
+                string Message = "The Glue database name was provided. Not running job.";
                 context.LogWarning(Message);
                 await SNSNotify(Message, context);
+                return;
+            }
+
+            if (String.IsNullOrEmpty(_GlueJobName))
+            {
+                string Message = "The Glue job name for the job was not provided as an environment variable. Not running job.";
+                context.LogWarning(Message);
+                await SNSNotify(Message, context);
+                return;
+            }
+
+            context.LogInfo($"Running glue job on table {table} in database {_GlueDatabaseName}.");
+
+            try
+            {
+                StartJobRunRequest Request = new StartJobRunRequest()
+                {
+                    JobName = _GlueJobName,
+                    Timeout = 1440, // 24 Hours          
+                    Arguments = new Dictionary<string, string>()
+                        {
+                            { "--table", table },
+                            { "--database", _GlueDatabaseName }
+                        }
+                };
+
+                if (!String.IsNullOrEmpty(_GlueDestinationBucket))
+                {
+                    Request.Arguments.Add("--destination_bucket", _GlueDestinationBucket);
+                }
+
+                StartJobRunResponse Response = await _GlueClient.StartJobRunAsync(Request);
+
+                if (Response.HttpStatusCode != HttpStatusCode.OK)
+                {
+                    string Message = $"Failed to start job with status code ${(int)Response.HttpStatusCode}";
+                    context.LogError(Message);
+                    await SNSNotify(Message, context);
+                }
+                else
+                {
+                    context.LogInfo($"Successfully started job {Response.JobRunId}");
+                }
+            }
+            catch (Exception e)
+            {
+                string Message = "Failed to start Glue job.";
+                context.LogError(Message, e);
+                await SNSNotify(Message + $" {e.Message}", context);
             }
         }
 
@@ -503,6 +482,19 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         /// <returns></returns>
         private static bool ValidManifestFile(string key)
         {
+            // There are 2 different configurations, when new CUR report versions are created and when
+            // they are overwritten. When they are overwritten, there's not a problem, but when new versions
+            // are created the same ReportName-Manifest.json file is created in the sub directory.
+            // Path for new versions at the top level
+            // UserSpecificPrefix/ReportName/20190101-20190201/ReportName-Manifest.json
+            // Path for new versions at the sub directory level
+            // UserSpecificPrefix/ReportNAme/20180901-20181001/645ea520-4fa8-4e2a-99b1-e54de0817b66/ReportName-Manifest.json
+            // This is mostly protected by the S3 event filter on the function that requires the suffix to be
+            // 01/ReportName-Manifest.json, but the GUID could still end in 01, so we need an additional
+            // level of protection, otherwise the function could get called twice and run the same actions twice
+            // would could unecessarily run expensive Glue jobs
+
+            // The key should not match the date and guid format regex
             return !_DateAndGuidRegex.IsMatch(key);
         }
 
@@ -546,62 +538,23 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             }
 
             Manifest ManifestFile = Manifest.Build(Body);
+            string Prefix = GetDestinationPrefix(ManifestFile);
 
             // Build the destination key map to link source key to destination key
-            Dictionary<string, string> DestinationKeyMap = GetDestinationKeyMapping(ManifestFile.ReportKeys, ManifestFile.Account);
+            Dictionary<string, string> DestinationKeyMap = ManifestFile.ReportKeys.ToDictionary(x => x, x => $"{Prefix}/{Path.GetFileName(x)}");
 
             // If there are no destination keys
             // then there is nothing to do, return
             if (!DestinationKeyMap.Any())
             {
-                string Message = $"No destination keys producted for s3://{Request.BucketName}/{Request.Key}";
+                string Message = $"No destination keys produced for s3://{Request.BucketName}/{Request.Key}";
                 context.LogWarning(Message);
                 await SNSNotify(Message, context);
                 return null;
             }
-
-            // Get the report Guid the destination path prefix
-            string Guid = ManifestFile.AssemblyId.ToString();
-            string Prefix = DestinationKeyMap.First().Value.Substring(0, DestinationKeyMap.First().Value.LastIndexOf("/"));
-
-            List<KeyVersion> KeysToDelete = new List<KeyVersion>();
-
-            // Get all the keys in the destination bucket that need to be deleted
-            try
-            {
-                KeysToDelete.AddRange(await ListAllObjectsAsync(destinationBucket, x => x.Where(y => !Path.GetFileName(y.Key).StartsWith(Guid, StringComparison.OrdinalIgnoreCase)), Prefix));
-            }
-            catch (Exception e)
-            {
-                context.LogError(e);
-                await SNSNotify($"{e.Message}\n{e.StackTrace}", context);
-                return null;
-            }
-
-            // Delete the old CUR files in the destination bucket
-            try
-            {
-                int DeletedCount = await DeleteObjectsAsync(KeysToDelete, destinationBucket);
-
-                if (DeletedCount != KeysToDelete.Count)
-                {
-                    string Message = $"Unable to delete all objects, expected to delete {KeysToDelete.Count} but only deleted {DeletedCount}.";
-                    context.LogError(Message);
-                    await SNSNotify(Message, context);
-                    return null;
-                }
-                else
-                {
-                    context.LogInfo($"Successfully deleted {DeletedCount} objects.");
-                }
-            }
-            catch (Exception e)
-            {
-                string Message = "Unable to delete all old CUR files.";
-                context.LogError(Message, e);
-                await SNSNotify(Message, context);
-                return null;
-            }
+          
+            // Copy all of the files over first to replace existing files, this way there
+            // is no period of time where a file may not exist and break an active query
 
             List<Task<CopyResponse>> CopyTasks = new List<Task<CopyResponse>>();
 
@@ -660,6 +613,50 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 }
             }
 
+            // Delete all of the keys in the that are not the files we just copied over
+
+            List<KeyVersion> KeysToDelete;
+
+            try
+            {
+                // Find all keys under the same prefix, and that aren't one of the keys of the files that have been copied
+                KeysToDelete = await ListAllObjectsAsync(destinationBucket, Prefix, x => x.Where(y => !DestinationKeyMap.Values.Contains(y.Key)));
+            }
+            catch (Exception e)
+            {
+                context.LogError(e);
+                await SNSNotify($"{e.Message}\n{e.StackTrace}", context);
+                return null;
+            }
+
+            // Delete the old CUR files in the destination bucket
+            try
+            {
+                if (KeysToDelete != null && KeysToDelete.Any())
+                {
+                    int DeletedCount = await DeleteObjectsAsync(KeysToDelete, destinationBucket);
+
+                    if (DeletedCount != KeysToDelete.Count)
+                    {
+                        string Message = $"Unable to delete all objects, expected to delete {KeysToDelete.Count} but only deleted {DeletedCount}.";
+                        context.LogError(Message);
+                        await SNSNotify(Message, context);
+                        return null;
+                    }
+                    else
+                    {
+                        context.LogInfo($"Successfully deleted {DeletedCount} objects.");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                string Message = "Unable to delete all old CUR files.";
+                context.LogError(Message, e);
+                await SNSNotify(Message, context);
+                return null;
+            }
+
             return ManifestFile;
         }
 
@@ -706,52 +703,65 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         }
 
         /// <summary>
-        /// Converts the source keys into the required format for the destination bucket
+        /// Gets the S3 prefix to be used in the destination bucket for this manifest's keys
         /// </summary>
-        /// <param name="sourceKeys"></param>
-        /// <param name="accountId"></param>
+        /// <param name="manifest"></param>
         /// <returns></returns>
-        private static Dictionary<string, string> GetDestinationKeyMapping(IEnumerable<string> sourceKeys, string accountId)
+        private static string GetDestinationPrefix(Manifest manifest)
         {
-            Dictionary<string, string> Results = new Dictionary<string, string>();
+            string Prefix = String.Empty;
+            DateTime Start = manifest.BillingPeriod.Start;
 
-            foreach (string Key in sourceKeys)
+            switch (_OutputPathFormat)
             {
-                Match ExtensionMatch = _ExtensionRegex.Match(Key);
-
-                // Make sure the object is a csv, csv.gz or csv.zip file
-                if (ExtensionMatch.Success)
-                {
-                    // Extract the date section of the key prefix
-                    Match DateGuidMatch = _DateAndGuidRegex.Match(Key);
-
-                    if (DateGuidMatch.Success)
+                case "billingperiod":
                     {
-                        string Guid = DateGuidMatch.Groups[7].Value;
-
-                        List<KeyVersion> Keys = new List<KeyVersion>();
-
-                        // accountid=123456789012/date=20181001/eb3c690f-eeaa-4781-b701-4fd32f8ab19f.csv.gz
-                        // This leaves a string.Format option in case the CUR report is chunked
-                        string[] KeyParts = Path.GetFileNameWithoutExtension(Key).Split("-");
-
-                        string ChunkId = "";
-
-                        if (KeyParts.Length > 1)
-                        {
-                            // Get file name without extension may only truncate off the .gz part from
-                            // .csv.gz or .csv.zip, so we know the actual chunk id will be the 0 element
-                            ChunkId = $"-{KeyParts[1].Split(".")[0]}";
-                        }
-
-                        string DestinationKey = $"accountid={accountId}/billingperiod={DateGuidMatch.Groups[1]}-{DateGuidMatch.Groups[2]}-{DateGuidMatch.Groups[3]}/{Guid}{ChunkId}{ExtensionMatch.Groups[1]}";
-
-                        Results.Add(Key, DestinationKey);
+                        Prefix = $"accountid={manifest.Account}/billingperiod={Start.ToString("yyyy-MM-dd")}";
+                        break;
                     }
-                }
+                case "yearmonth":
+                    {
+                        Prefix = $"accountid={manifest.Account}/year={Start.Year}/month={Start.Month}";
+                        break;
+                    }
             }
 
-            return Results;
+            return Prefix;
+        }
+
+        /// <summary>
+        /// Generates a map of the source report S3 keys to their destination S3 location
+        /// based on the style of output path desired
+        /// </summary>
+        /// <param name="manifest"></param>
+        /// <returns></returns>
+        private static Dictionary<string, string> GetDestinationKeyMapping(Manifest manifest)
+        {
+            string Prefix = GetDestinationPrefix(manifest);
+
+            return manifest.ReportKeys.ToDictionary(x => x, x => $"{Prefix}/{Path.GetFileName(x)}");
+        }
+
+        /// <summary>
+        /// Lists all the objects in a bucket
+        /// </summary>
+        /// <param name="bucket"></param>
+        /// <param name="prefix"></param>
+        /// <returns></returns>
+        private static async Task<List<KeyVersion>> ListAllObjectsAsync(string bucket, string prefix = "")
+        {
+            return await ListAllObjectsAsync(bucket, prefix, null);
+        }
+
+        /// <summary>
+        /// Lists all the objects in a bucket
+        /// </summary>
+        /// <param name="bucket"></param>
+        /// <param name="filter"></param>
+        /// <returns></returns>
+        private static async Task<List<KeyVersion>> ListAllObjectsAsync(string bucket, Func<IEnumerable<S3Object>, IEnumerable<S3Object>> filter)
+        {
+            return await ListAllObjectsAsync(bucket, String.Empty, filter);
         }
 
         /// <summary>
@@ -761,15 +771,19 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         /// <param name="filter"></param>
         /// <param name="prefix"></param>
         /// <returns></returns>
-        private static async Task<List<KeyVersion>> ListAllObjectsAsync(string bucket, Func<IEnumerable<S3Object>, IEnumerable<S3Object>> filter, string prefix = "")
+        private static async Task<List<KeyVersion>> ListAllObjectsAsync(string bucket, string prefix = "", Func<IEnumerable<S3Object>, IEnumerable<S3Object>> filter = null)
         {
             List<KeyVersion> Keys = new List<KeyVersion>();
 
             ListObjectsV2Request Request = new ListObjectsV2Request()
             {
-                BucketName = bucket,
-                Prefix = prefix
+                BucketName = bucket
             };
+
+            if (!String.IsNullOrEmpty(prefix))
+            {
+                Request.Prefix = prefix;
+            }
 
             ListObjectsV2Response Response;
 
@@ -780,10 +794,22 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                 if (Response.HttpStatusCode == HttpStatusCode.OK)
                 {
                     // Only add keys that don't have the same Guid as our new file
-                    Keys.AddRange(filter.Invoke(Response.S3Objects).Select(x => new KeyVersion() { Key = x.Key }));
-
+                    if (filter != null)
+                    {
+                        Keys.AddRange(filter.Invoke(Response.S3Objects).Select(x => new KeyVersion() { Key = x.Key }));
+                    }
+                    else
+                    {
+                        Keys.AddRange(Response.S3Objects.Select(x => new KeyVersion() { Key = x.Key }));
+                    }
+                   
                     // Update the continuation token
                     Request.ContinuationToken = Response.NextContinuationToken;
+                }
+                else if (Response.HttpStatusCode == HttpStatusCode.ServiceUnavailable)
+                {
+                    // Implement linear backoff
+                    Thread.Sleep(2000);
                 }
                 else
                 {
@@ -815,17 +841,26 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
                     Objects = Chunk
                 };
 
-                DeleteObjectsResponse DeleteResponse = await _S3Client.DeleteObjectsAsync(DeleteRequest);
-
-                if (DeleteResponse.HttpStatusCode == HttpStatusCode.OK)
+                while (true)
                 {
-                    Counter += DeleteResponse.DeletedObjects.Count;
-                }
-                else
-                {
-                    string Message = String.Join("\n", DeleteResponse.DeleteErrors.Select(x => $"{x.Key} = {x.Code} : {x.Message}"));
+                    DeleteObjectsResponse DeleteResponse = await _S3Client.DeleteObjectsAsync(DeleteRequest);
 
-                    throw new Exception($"Could not delete objects from S3 with status {(int)DeleteResponse.HttpStatusCode} and errors:\n{Message}");
+                    if (DeleteResponse.HttpStatusCode == HttpStatusCode.OK)
+                    {
+                        Counter += DeleteResponse.DeletedObjects.Count;
+                        break;
+                    }
+                    else if (DeleteResponse.HttpStatusCode == HttpStatusCode.ServiceUnavailable)
+                    {
+                        // Use linear backoff
+                        Thread.Sleep(2000);
+                    }
+                    else
+                    {
+                        string Message = String.Join("\n", DeleteResponse.DeleteErrors.Select(x => $"{x.Key} = {x.Code} : {x.Message}"));
+
+                        throw new Exception($"Could not delete objects from S3 with status {(int)DeleteResponse.HttpStatusCode} and errors:\n{Message}");
+                    }
                 }
             }
 
@@ -842,19 +877,34 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
         /// <returns></returns>
         private static async Task<CopyResponse> CopyObjectAsync(string sourceKey, string destinationKey, string sourceBucket, string destinationBucket)
         {
+            CopyObjectRequest CopyRequest = new CopyObjectRequest()
+            {
+                SourceBucket = sourceBucket,
+                SourceKey = sourceKey,
+                DestinationBucket = _DestinationBucket,
+                DestinationKey = destinationKey
+            };
+
             try
             {
-                CopyObjectRequest CopyRequest = new CopyObjectRequest()
-                {
-                    SourceBucket = sourceBucket,
-                    SourceKey = sourceKey,
-                    DestinationBucket = _DestinationBucket,
-                    DestinationKey = destinationKey
-                };
+                while (true)
+                {     
+                    CopyObjectResponse CopyResponse = await _S3Client.CopyOrMoveObjectAsync(CopyRequest);
 
-                CopyObjectResponse CopyResponse = await _S3Client.CopyOrMoveObjectAsync(CopyRequest);
-
-                return new CopyResponse(CopyResponse, sourceBucket, sourceKey, destinationBucket, destinationKey);
+                    if (CopyResponse.HttpStatusCode == HttpStatusCode.OK)
+                    {
+                        return new CopyResponse(CopyResponse, sourceBucket, sourceKey, destinationBucket, destinationKey);
+                    }
+                    else if (CopyResponse.HttpStatusCode == HttpStatusCode.ServiceUnavailable)
+                    {
+                        // Use a linear backoff
+                        Thread.Sleep(2000);
+                    }
+                    else
+                    {
+                        return new CopyResponse(new Exception($"Received an HTTP {(int)CopyResponse.HttpStatusCode} {CopyResponse.HttpStatusCode} response"), sourceBucket, sourceKey, destinationBucket, destinationKey);
+                    }
+                } 
             }
             catch (Exception e)
             {

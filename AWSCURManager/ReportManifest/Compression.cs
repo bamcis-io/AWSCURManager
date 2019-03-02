@@ -18,6 +18,11 @@
         /// <summary>
         /// No compression
         /// </summary>
-        NONE
+        NONE,
+
+        /// <summary>
+        /// Parquet compression
+        /// </summary>
+        PARQUET
     }
 }

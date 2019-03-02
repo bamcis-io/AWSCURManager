@@ -1,7 +1,7 @@
 {
     "AWSTemplateFormatVersion" : "2010-09-09",
     "Transform"                : "AWS::Serverless-2016-10-31",
-    "Description"              : "Keeps the list of Cost and Usage Reports for a reporting period up to date with only 1 copy of the report in the S3 bucket.",
+    "Description"              : "Keeps the list of Cost and Usage Reports for a reporting period up to date with only 1 copy of the report in the destination S3 bucket.",
 
 
     "Parameters"               : {
@@ -10,24 +10,36 @@
 			"Type" : "String",
 			"Default" : "arn:aws:lambda:us-east-1:252486826203:function:CostAndUsageReportResource"
 		},
-		"Granularity"    : {
-            "Description" : "The granularity of the report line items. For hourly there is a line item per hour for each resource. For daily, there is 1 line item per day for each resource with a usage quantity that accounts for each hour used.",
-            "Type"        : "String",
-            "AllowedValues" : [
-                "Hourly",
-                "Daily"
-            ],
-            "Default"       : "Hourly"
-        },
-		"ReportCompression" : {
+
+		"Format" : {
 			"Type" : "String",
-			"Description" : "The type of compression to use for the CUR. Don't use ZIP.",
+			"Description" : "The format that the reports will use.",
+			"AllowedValues" : [
+				"Parquet",
+				"TextOrCsv"
+			],
+			"Default":"TextOrCsv"
+		},
+		"Compression" : {
+			"Type" : "String",
+			"Description" : "The compression that the reports will use.",
 			"AllowedValues" : [
 				"GZIP",
+				"Parquet",
 				"ZIP"
 			],
 			"Default" : "GZIP"
 		},
+		"TimeUnit" : {
+			"Type" : "String",
+			"Description" : "The default time unit used for reports if not defined in the request.",
+			"AllowedValues" : [
+				"HOURLY",
+				"DAILY"
+			],
+			"Default" : "DAILY"
+		},
+
         "ReportName"   : {
             "Description" : "The name of the report",
             "Type"        : "String",
@@ -47,7 +59,7 @@
             "ConstraintDescription" : "Member must satisfy regular expression pattern: ^[a-z](?:(?:\\.(?!\\.))|-|[a-zA-Z0-9]){1,61}[a-z]$"
         },
 		"GlueJobName" : {
-			"Description" : "The name of the Glue Job that will run after the files are moved. Leave this blank if you don't want to run a glue job.",
+			"Description" : "(Optional) The name of the Glue Job that will run after the files are moved. Leave this blank if you don't want to run a glue job.",
 			"Type" : "String",
 			"Default" : ""
 		},
@@ -57,9 +69,18 @@
 			"Default" : "billingdata"
 		},
 		"GlueJobDestinationBucket" : {
-			"Description" : "The S3 Bucket name where the Glue ETL Job will write out the job results. If this is blank, the job won't be run.",
+			"Description" : "(Optional) The S3 Bucket name where the Glue ETL Job will write out the job results.",
 			"Type" : "String",
 			"Default" : ""
+		},
+		"OutputPathFormat" : {
+			"Type" : "String",
+			"Description" : "The path format used for the resulting S3 objects. BillingPeriod: accountid=123456789012/billingperiod=20190101/filename.extension. YearMonth: accountid=123456789012/year=2019/month=1/filename.extension",
+			"AllowedValues" : [
+				"BillingPeriod",
+				"YearMonth"
+			],
+			"Default" : "YearMonth"
 		},
 
         "LogRetentionInDays" : {
@@ -92,6 +113,54 @@
         }
     },
 
+	"Rules":{
+		"ParquetFormat" : {
+			"RuleCondition" : {
+				"Fn::Equals" : [
+					{
+						"Ref" : "Format"
+					},
+					"Parquet"
+				]
+			},
+			"Assertions" : [
+				{
+					"Assert" : {
+						"Fn::Equals" : [
+							{
+								"Ref" : "Compression"
+							},
+							"Parquet"
+						]
+					},
+					"AssertDescription" : "When the format is specified as Parquet, the compression must also be Parquet."
+				}
+			]
+		},
+		"ParquetCompression" : {
+			"RuleCondition" : {
+				"Fn::Equals":[
+					{
+						"Ref":"Compression"
+					},
+					"Parquet"
+				]
+			},
+			"Assertions" : [
+				{
+					"Assert" : {
+						"Fn::Equals" : [
+							{
+								"Ref":"Format"
+							},
+							"Parquet"
+						]
+					},
+					"AssertDescription":"When the compression is specified as Parquet, the format must also be Parquet."
+				}
+			]
+		}
+	},
 
     "Conditions"               : {
         "InfiniteRetention" : {
@@ -122,17 +191,6 @@
 			"Lambda" : {
 				"FunctionName" : "CURManager"
 			}
-		},
-		"Compression" : {
-			"GZIP" : {
-				"Extension" : ".csv.gz"
-			},
-			"ZIP" : {
-				"Extension" : ".csv.zip"
-			},
-			"NONE" : {
-				"Extension" : ".csv"
-			}
 		}
 	},
 
@@ -148,8 +206,17 @@
 					"ReportName" : {
 						"Ref" : "ReportName"
 					},
-					"Compression" : "GZIP",
-					"Format"      : "TextORcsv",
+					"Compression" : {
+						"Ref" : "Compression"
+					},
+					"Format"      : {
+						"Ref" : "Format"
+					},
+					"AdditionalSchemaElements" : [
+						"RESOURCES"
+					],
+					"RefreshClosedReports" : "true",
+					"ReportVersioning" : "OVERWRITE_REPORT",
 					"S3Bucket"    : {
 						"Ref" : "ReportDeliveryS3Bucket"
 					},
@@ -160,7 +227,7 @@
 						"Ref" : "AWS::Region"
 					},
 					"TimeUnit"    : {
-						"Ref" : "Granularity"
+						"Ref" : "TimeUnit"
 					}
 				}
 			},
@@ -534,6 +601,9 @@
 						},
 						"GLUE_DESTINATION_BUCKET" : {
 							"Ref" : "GlueJobDestinationBucket"
+						},
+						"OUTPUT_PATH_FORMAT" : {
+							"Ref" : "OutputPathFormat"
 						}
 					 }
 				},

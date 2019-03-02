@@ -20,6 +20,13 @@ namespace BAMCIS.LambaFunctions.AWSCURManager.ReportManifest
         /// </summary>
         public string Name { get; }
 
+        /// <summary>
+        /// The column type, like string or DateTime. If the type wasn't defined in the manifest,
+        /// then this value may be null
+        /// </summary>
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public string Type { get; }
+
         #endregion
 
         #region Constructors
@@ -29,11 +36,13 @@ namespace BAMCIS.LambaFunctions.AWSCURManager.ReportManifest
         /// </summary>
         /// <param name="category"></param>
         /// <param name="name"></param>
+        /// <param name="type"></param>
         [JsonConstructor()]
-        public Column(string category, string name)
+        public Column(string category, string name, string type)
         {
             this.Category = category ?? throw new ArgumentNullException("category");
             this.Name = name ?? throw new ArgumentNullException("name");
+            this.Type = type;
         }
 
         #endregion
