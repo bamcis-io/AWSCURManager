@@ -19,5 +19,5 @@ phases:
 artifacts:
   name: BuildOutput
   files:
-    - bin/Release/netcoreapp2.1/$PROJECT_NAME.template
+    - AWSCURManager/bin/Release/netcoreapp2.1/$PROJECT_NAME.template
   discard-paths: yes  
