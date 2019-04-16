@@ -42,7 +42,7 @@ running this.
 ## Revision History
 
 ### 3.0.0
-Added support for deployment with AWS CodePipeline.
+Added support for deployment with AWS CodePipeline. New updates.
 
 ### 2.0.2
 Fixed column type for csv files, all types are now string.
