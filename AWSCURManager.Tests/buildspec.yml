@@ -3,7 +3,7 @@ phases:
   pre_build:
     commands:
       - echo Restore started on `date`
-	    - cd AWSCURManager.Tests
+      - cd AWSCURManager.Tests
       - dotnet clean
       - dotnet restore
       - AWSDevAccountId=$ACCOUNT_ID
