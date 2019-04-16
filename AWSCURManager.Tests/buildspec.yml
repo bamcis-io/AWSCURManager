@@ -16,6 +16,7 @@ phases:
   post_build:
     commands:
       - echo Test stated on `date`
-      - RESULT=$(dotnet test)
-      - echo Tests resulted in exit code $RESULT
-      - exit $RESULT
+      - dotnet test
+      - EXIT_CODE=$?
+      - echo Tests resulted in exit code $EXIT_CODE
+      - exit $EXIT_CODE
