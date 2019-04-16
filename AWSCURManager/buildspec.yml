@@ -16,7 +16,7 @@ phases:
       - echo Build started on `date`
       - dotnet lambda package-ci --configuration Release --framework netcoreapp2.1 --s3-bucket $BUCKET --s3-prefix $PROJECT_NAME --output-template bin/release/netcoreapp2.1/$PROJECT_NAME.template --output-package bin/release/netcoreapp2.1/$PROJECT_NAME.zip
 
-  artifacts:
-    files:
-      - bin/release/netcoreapp2.1/$PROJECT_NAME.template
-    discard-paths: yes  
+artifacts:
+  files:
+    - bin/release/netcoreapp2.1/$PROJECT_NAME.template
+  discard-paths: yes  
