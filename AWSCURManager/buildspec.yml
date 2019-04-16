@@ -1,0 +1,22 @@
+version: 0.2
+phases:
+  install:
+    commands:
+	  - dotnet tool install -g Amazon.Lambda.Tools
+
+  pre_build:
+    commands:
+      - echo Restore started on `date`
+	  - cd AWSCURManager
+      - dotnet clean
+      - dotnet restore
+      
+  build:
+    commands:
+      - echo Build started on `date`
+      - dotnet lambda package-ci --configuration Release --framework netcoreapp2.1 --s3-bucket $BUCKET --s3-prefix $PROJECT_NAME --output-template bin/release/netcoreapp2.1/$PROJECT_NAME.template --output-package bin/release/netcoreapp2.1/$PROJECT_NAME.zip
+
+  artifacts:
+	files:
+	  - bin/release/netcoreapp2.1/$PROJECT_NAME.template
+	discard-paths: yes  

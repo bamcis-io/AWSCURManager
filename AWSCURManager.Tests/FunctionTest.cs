@@ -20,7 +20,9 @@ namespace CURUpdater.Tests
     public class FunctionTest
     {
         private static string User = Environment.UserName; // UPDATE THIS VARIABLE
-        private static string AccountNumber = Environment.GetEnvironmentVariable("AWSDevAccountId"); // UPDATE THIS TO YOUR ACCOUNT NUMBER
+        private static string AccountNumber = Environment.GetEnvironmentVariable("ACCOUNT_ID"); // UPDATE THIS TO YOUR ACCOUNT NUMBER
+        private static string Region = Environment.GetEnvironmentVariable("REGION"); // UPDATE THIS TO YOUR REGION
+        private static string AWSPartition = Environment.GetEnvironmentVariable("PARTITION"); // UPDATE THIS TO YOUR REGION
         private static string SourceBucket = $"{User}-billing-delivery"; // UPDATE THIS TO MATCH YOUR SOURCE BUCKET
         private static string DestinationBucket = $"{User}-billing-repo"; // UPDATE THIS TO MATCH YOUR DESTINATION BUCKET
         private static string SourceKey = $"{AccountNumber}/GzipDetailedDaily/20181001-20181101/eb3c690f-eeaa-4781-b701-4fd32f8ab19f/GzipDetailedDaily-1.csv.gz";
@@ -38,16 +40,17 @@ namespace CURUpdater.Tests
         {
             AWSConfigs.AWSProfilesLocation = $"{Environment.GetEnvironmentVariable("UserProfile")}\\.aws\\credentials";
             AWSConfigs.AWSProfileName = ProfileName;
-            CredsFile.TryGetProfile(ProfileName, out CredentialProfile Profile);
-            Creds = AWSCredentialsFactory.GetAWSCredentials(Profile, CredsFile);
+            if (CredsFile.TryGetProfile(ProfileName, out CredentialProfile Profile))
+            {
+                Creds = AWSCredentialsFactory.GetAWSCredentials(Profile, CredsFile);
+            }
         }
 
         public FunctionTest()
         {
         }
 
-        [Fact]
-        public async Task TestManifestFile()
+        private async Task TestManifestFile()
         {
             // ARRANGE
             string Json = $@"
@@ -56,7 +59,7 @@ namespace CURUpdater.Tests
       {{
         ""eventVersion"": ""2.0"",
         ""eventSource"": ""aws:s3"",
-        ""awsRegion"": ""us-east-1"",
+        ""awsRegion"": ""{Region}"",
         ""eventTime"": ""2018-10-01T01:00:00.000Z"",
         ""eventName"": ""ObjectCreated:Put"",
         ""userIdentity"": {{
@@ -77,7 +80,7 @@ namespace CURUpdater.Tests
             ""ownerIdentity"": {{
               ""principalId"": ""EXAMPLE""
             }},
-            ""arn"": ""arn:aws:s3:::{SourceBucket}""
+            ""arn"": ""arn:{AWSPartition}:s3:::{SourceBucket}""
           }},
           ""object"": {{
             ""key"": ""{SourceManifestKey}"",
@@ -102,7 +105,7 @@ namespace CURUpdater.Tests
                 LogGroupName = "aws/lambda/CURManager",
                 LogStreamName = Guid.NewGuid().ToString(),
                 RemainingTime = TimeSpan.FromSeconds(300),
-                InvokedFunctionArn = $"arn:aws:lambda:us-east-1:{AccountNumber}:function:CURManager"
+                InvokedFunctionArn = $"arn:{AWSPartition}:lambda:{Region}:{AccountNumber}:function:CURManager"
             };
 
             S3Event Event = JsonConvert.DeserializeObject<S3Event>(Json);
@@ -137,11 +140,19 @@ namespace CURUpdater.Tests
 
         }
 
-        [Fact]
-        public async Task TestNonExistentGlueTable()
+        private async Task TestNonExistentGlueTable()
         {
             // ARRANGE
-            IAmazonGlue GlueClient = new AmazonGlueClient(Creds);
+
+            IAmazonGlue GlueClient;
+            if (Creds != null)
+            {
+                GlueClient = new AmazonGlueClient(Creds);
+            }
+            else
+            {
+                GlueClient = new AmazonGlueClient();
+            }
 
             GetTableRequest Request = new GetTableRequest()
             {
@@ -153,8 +164,7 @@ namespace CURUpdater.Tests
             await Assert.ThrowsAsync<EntityNotFoundException>(async () => await GlueClient.GetTableAsync(Request));
         }
 
-        [Fact]
-        public async Task TestLaunchJob()
+        private async Task TestLaunchJob()
         {
             //ARRANGE
 
@@ -170,7 +180,15 @@ namespace CURUpdater.Tests
                         }
             };
 
-            IAmazonGlue GlueClient = new AmazonGlueClient(Creds);
+            IAmazonGlue GlueClient;
+            if (Creds != null)
+            {
+                GlueClient = new AmazonGlueClient(Creds);
+            }
+            else
+            {
+                GlueClient = new AmazonGlueClient();
+            }
 
             // ACT
             StartJobRunResponse Response = await GlueClient.StartJobRunAsync(Request);

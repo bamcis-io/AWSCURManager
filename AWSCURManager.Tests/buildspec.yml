@@ -1,0 +1,21 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Restore started on `date`
+	    - cd AWSCURManager.Tests
+      - dotnet clean
+      - dotnet restore
+      - AWSDevAccountId=$ACCOUNT_ID
+      
+  build:
+    commands:
+      - echo Build started on `date`
+      - dotnet build
+
+  post_build:
+    commands:
+      - echo Test stated on `date`
+      - RESULT=$(dotnet test)
+      - echo Tests resulted in exit code $RESULT
+      - exit $RESULT
