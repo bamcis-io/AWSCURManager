@@ -17,6 +17,7 @@ phases:
       - dotnet lambda package-ci --configuration Release --framework netcoreapp2.1 --s3-bucket $BUCKET --template AWSCURManager.template --output-template bin/Release/netcoreapp2.1/$PROJECT_NAME.template --output-package bin/Release/netcoreapp2.1/$PROJECT_NAME.zip
 
 artifacts:
+  name: BuildOutput
   files:
-    - bin/release/netcoreapp2.1/$PROJECT_NAME.template
+    - bin/Release/netcoreapp2.1/$PROJECT_NAME.template
   discard-paths: yes  
