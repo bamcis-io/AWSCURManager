@@ -563,7 +563,7 @@
                 ]
             }
         },
-		"LambdaSQSWorkerPolicy"     : {
+		"LambdaSQSPolicy"     : {
             "Type" : "AWS::IAM::Policy",
             "Properties" : {
                 "PolicyName" : "LambdaSQSWorkerPolicy",
@@ -691,7 +691,10 @@
                         "Ref" : "OrganizationTag"
                     }
                 }
-            }
+            },
+			"DependsOn" : [
+				"LambdaSQSPolicy"
+			]
         },
 
         "CloudWatchLogGroup"  : {
