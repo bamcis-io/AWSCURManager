@@ -41,6 +41,9 @@ running this.
 
 ## Revision History
 
+### 3.1.0
+Updated to netcoreapp3.1 and using the native CFN resource for the CUR report definition.
+
 ### 3.0.0
 Added support for deployment with AWS CodePipeline. Added CloudWatch monitoring for function invocations.
 

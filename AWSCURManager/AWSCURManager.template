@@ -5,12 +5,6 @@
 
 
     "Parameters"               : {
-		"CostAndUsageReportLambdaArn" : {
-			"Description" : "The ARN of the Lambda function that creates CUR definitions.",
-			"Type" : "String",
-			"Default" : "arn:aws:lambda:us-east-1:252486826203:function:CostAndUsageReportResource"
-		},
-
 		"Format" : {
 			"Type" : "String",
 			"Description" : "The format that the reports will use.",
@@ -197,12 +191,9 @@
 
     "Resources"                : {
 		"CostAndUsageReport"   : {
-			"Type" : "Custom::CUR",
+			"Type" : "AWS::CUR::ReportDefinition",
 			"Properties" : {
-				"ServiceToken" : {
-					"Ref" : "CostAndUsageReportLambdaArn"
-				},
-				"ReportDefinition" : {
+
 					"ReportName" : {
 						"Ref" : "ReportName"
 					},
@@ -229,7 +220,6 @@
 					"TimeUnit"    : {
 						"Ref" : "TimeUnit"
 					}
-				}
 			},
 			"DependsOn"  : [
 				"ReportDeliveryS3BucketPolicy"
@@ -599,7 +589,7 @@
 				},
 				"Description" : "Reads the updated manifest file and moves the new report files to the destination bucket.",
                 "Handler" : "AWSCURManager::BAMCIS.LambdaFunctions.AWSCURManager.Entrypoint::Exec",
-                "Runtime" : "dotnetcore2.1",
+                "Runtime" : "dotnetcore3.1",
                 "CodeUri" : "",
                 "MemorySize" : 256,
                 "Timeout"    : 30,

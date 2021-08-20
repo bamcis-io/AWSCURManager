@@ -14,10 +14,10 @@ phases:
   build:
     commands:
       - echo Build started on `date`
-      - dotnet lambda package-ci --configuration Release --framework netcoreapp2.1 --s3-bucket $BUCKET --template AWSCURManager.template --output-template bin/Release/netcoreapp2.1/$PROJECT_NAME.template --output-package bin/Release/netcoreapp2.1/$PROJECT_NAME.zip
+      - dotnet lambda package-ci --configuration Release --framework netcoreapp3.1 --s3-bucket $BUCKET --template AWSCURManager.template --output-template bin/Release/netcoreapp3.1/$PROJECT_NAME.template --output-package bin/Release/netcoreapp3.1/$PROJECT_NAME.zip
 
 artifacts:
   name: BuildOutput
   files:
-    - AWSCURManager/bin/Release/netcoreapp2.1/$PROJECT_NAME.template
+    - AWSCURManager/bin/Release/netcoreapp3.1/$PROJECT_NAME.template
   discard-paths: yes  

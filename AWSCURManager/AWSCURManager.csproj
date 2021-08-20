@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netcoreapp2.1</TargetFramework>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <AWSProjectType>Lambda</AWSProjectType>
     <RootNamespace>BAMCIS.LambaFunctions.AWSCURManager</RootNamespace>
@@ -17,17 +17,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Amazon.Lambda.Core" Version="1.0.0" />
-    <PackageReference Include="Amazon.Lambda.S3Events" Version="1.0.2" />
-    <PackageReference Include="Amazon.Lambda.Serialization.Json" Version="1.4.0" />
-    <PackageReference Include="AWSSDK.Glue" Version="3.3.14.1" />
-    <PackageReference Include="AWSSDK.S3" Version="3.3.24.2" />
-    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="3.3.1.13" />
-    <PackageReference Include="BAMCIS.AWSLambda.Common" Version="1.7.2" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <DotNetCliToolReference Include="Amazon.Lambda.Tools" Version="2.2.0" />
+    <PackageReference Include="Amazon.Lambda.Core" Version="2.0.0" />
+    <PackageReference Include="Amazon.Lambda.S3Events" Version="2.0.1" />
+    <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" Version="2.1.0" />
+    <PackageReference Include="AWSSDK.Glue" Version="3.7.6.6" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.1.25" />
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="3.7.2.24" />
+    <PackageReference Include="BAMCIS.AWSLambda.Common" Version="2.0.1" />
   </ItemGroup>
 
   <ItemGroup>
