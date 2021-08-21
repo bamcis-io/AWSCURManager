@@ -24,6 +24,7 @@
     <PackageReference Include="AWSSDK.S3" Version="3.7.1.25" />
     <PackageReference Include="AWSSDK.SimpleNotificationService" Version="3.7.2.24" />
     <PackageReference Include="BAMCIS.AWSLambda.Common" Version="2.0.1" />
+    <PackageReference Include="Interleaved" Version="1.0.0" />
   </ItemGroup>
 
   <ItemGroup>

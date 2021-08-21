@@ -18,6 +18,7 @@ using static Amazon.S3.Util.S3EventNotification;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using System.Threading;
+using BAMCIS.Parallel.Interleaved;
 
 // Assembly attribute to enable the Lambda function's JSON input to be converted into a .NET class.
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.SystemTextJson.DefaultLambdaJsonSerializer))]
@@ -889,7 +890,7 @@ namespace BAMCIS.LambdaFunctions.AWSCURManager
             {
                 while (true)
                 {     
-                    CopyObjectResponse CopyResponse = await _S3Client.CopyOrMoveObjectAsync(CopyRequest);
+                    CopyObjectResponse CopyResponse = await _S3Client.CopyObjectAsync(CopyRequest);
 
                     if (CopyResponse.HttpStatusCode == HttpStatusCode.OK)
                     {
