@@ -1,8 +1,8 @@
 version: 0.2
 phases:
   install:
-    commands:
-      - dotnet tool install -g Amazon.Lambda.Tools
+    runtime-versions:
+      dotnet: 3.1
 
   pre_build:
     commands:
@@ -10,14 +10,17 @@ phases:
       - cd AWSCURManager
       - dotnet clean
       - dotnet restore
+      - mkdir -p .aws-sam
+      - mkdir -p .aws-sam/output
       
   build:
     commands:
       - echo Build started on `date`
-      - dotnet lambda package-ci --configuration Release --framework netcoreapp3.1 --s3-bucket $BUCKET --template AWSCURManager.template --output-template bin/Release/netcoreapp3.1/$PROJECT_NAME.template --output-package bin/Release/netcoreapp3.1/$PROJECT_NAME.zip
+      - sam build --template-file AWSCURManager.template --region $AWS_REGION
+      - sam package --kms-key-id $CODEBUILD_KMS_KEY_ID --s3-bucket $BUCKET --s3-prefix "${PROJECT_NAME}/" --use-json --region $AWS_REGION --output-template-file .aws-sam/output/$PROJECT_NAME.template 
 
 artifacts:
   name: BuildOutput
   files:
-    - AWSCURManager/bin/Release/netcoreapp3.1/$PROJECT_NAME.template
+    - AWSCURManager/.aws-sam/output/$PROJECT_NAME.template
   discard-paths: yes  
