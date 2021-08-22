@@ -104,7 +104,16 @@
             "Type"        : "String",
             "AllowedPattern" : "^\\S{2,}$",
             "ConstraintDescription" : "Member must satisfy regular expression pattern: ^\\S{2,}$"
-        }
+        },
+
+        "CodeBucket" : {
+	       "Description" : "The bucket where the code is uploaded",
+		   "Type" : "String"
+	     },
+	    "CodeKey" : {
+	       "Description" : "The object key of the lambda deployment package",
+	       "Type" : "String"
+	    }
     },
 
 	"Rules":{
@@ -590,7 +599,14 @@
 				"Description" : "Reads the updated manifest file and moves the new report files to the destination bucket.",
                 "Handler" : "AWSCURManager::BAMCIS.LambdaFunctions.AWSCURManager.Entrypoint::Exec",
                 "Runtime" : "dotnetcore3.1",
-                "CodeUri" : "",
+                "CodeUri": {
+		           "Bucket" : {
+		              "Ref" : "CodeBucket"
+		           },
+		           "Key" : {
+		              "Ref" : "CodeKey"
+		           }
+		        },
                 "MemorySize" : 256,
                 "Timeout"    : 30,
                 "Role"       : {

@@ -3,6 +3,8 @@ phases:
   install:
     runtime-versions:
       dotnet: 3.1
+    commands:
+      - dotnet tool install -g Amazon.Lambda.Tools
 
   pre_build:
     commands:
@@ -10,17 +12,24 @@ phases:
       - cd AWSCURManager
       - dotnet clean
       - dotnet restore
-      - mkdir -p .aws-sam
-      - mkdir -p .aws-sam/output
       
   build:
     commands:
       - echo Build started on `date`
-      - sam build --template-file AWSCURManager.template --region $AWS_REGION
-      - sam package --kms-key-id $CODEBUILD_KMS_KEY_ID --s3-bucket $BUCKET --s3-prefix "${PROJECT_NAME}/" --use-json --region $AWS_REGION --output-template-file .aws-sam/output/$PROJECT_NAME.template 
+      - echo Build Number $CODEBUILD_BUILD_NUMBER
+      - dotnet lambda package --configuration Release --framework netcoreapp3.1 --output-package bin/Release/netcoreapp3.1/$PROJECT_NAME-$CODEBUILD_START_TIME.zip
+      - cp AWSCURManager.template $PROJECT_NAME.template
 
+  post_build:
+    commands:
+      - echo Copying code zip to S3
+      - aws s3 cp bin/Release/netcoreapp3.1/$PROJECT_NAME-$CODEBUILD_START_TIME.zip s3://$BUCKET/$PROJECT_NAME/$PROJECT_NAME-$CODEBUILD_START_TIME.zip --sse aws:kms --sse-kms-key $CODEBUILD_KMS_KEY_ID --acl bucket-owner-full-control
+      - "json=\"{\\\"Parameters\\\" : { \\\"CodeBucket\\\" : \\\"$BUCKET\\\", \\\"CodeKey\\\" : \\\"$PROJECT_NAME/$PROJECT_NAME-$CODEBUILD_START_TIME.zip\\\"} }\""
+      - echo $json >> CloudFormationConfig.json
 artifacts:
   name: BuildOutput
+  base-directory: $CODEBUILD_SRC_DIR
   files:
-    - AWSCURManager/.aws-sam/output/$PROJECT_NAME.template
+    - AWSCURManager/$PROJECT_NAME.template
+    - AWSCURManager/CloudFormationConfig.json
   discard-paths: yes  
