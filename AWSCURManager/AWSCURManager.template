@@ -317,10 +317,10 @@
 								"Fn::Sub" : "arn:aws:s3:::${ReportRepositoryS3Bucket}/*"								
 							},
 							"Condition" : {
-								"StringNotLike" : {
-									"aws:UserId" : [
+								"ArnNotLike" : {
+									"aws:PrincipalArn" : [
 										{
-											"Fn::Sub" : "${LambdaCURRole.RoleId}:*"
+											"Fn::Sub" : "${LambdaCURRole.Arn}"
 										}
 									]
 								}
