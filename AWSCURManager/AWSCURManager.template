@@ -251,33 +251,14 @@
                     "Ref" : "ReportDeliveryS3Bucket"
                 },
                 "PolicyDocument" : {
-                    "Version" : "2008-10-17",
+                    "Version" : "2012-10-17",
                     "Id"      : "1",
                     "Statement" : [
-						{
-							"Sid": "0",
-							"Effect": "Deny",
-							"NotPrincipal": {
-								"AWS": [
-									"AIDAIONIVVYH4HUH237AE",									
-									"arn:aws:iam::386209384616:user/IAM-Programmatic-Access-Prod",
-									"AIDAJLSI7DTYBUZAOKHVM",
-									"arn:aws:iam::386209384616:user/Origami_CustomerReportPublishing_us-east-1",
-									"arn:aws:iam::386209384616:root"
-								]
-							},
-							"Action": [
-								"s3:PutObject"
-							],
-							"Resource":  {
-								"Fn::Sub" : "arn:aws:s3:::${ReportDeliveryS3Bucket}/*"
-							}
-						},
                         {
                             "Sid" : "1",
                             "Effect" : "Allow",
                             "Principal" : {
-                                "AWS" : "arn:aws:iam::386209384616:root"
+                               "Service": "billingreports.amazonaws.com"
                             },
                             "Action"    : [
                                 "s3:GetBucketAcl",
@@ -291,7 +272,7 @@
                             "Sid" : "2",
                             "Effect" : "Allow",
                             "Principal" : {
-                                "AWS" : "arn:aws:iam::386209384616:root"
+                               "Service": "billingreports.amazonaws.com"
                             },
                             "Action"    : [
                                 "s3:PutObject"
