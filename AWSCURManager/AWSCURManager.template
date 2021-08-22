@@ -302,7 +302,7 @@
                     "Ref" : "ReportRepositoryS3Bucket"
                 },
                 "PolicyDocument" : {
-                    "Version" : "2008-10-17",
+                    "Version" : "2012-10-17",
                     "Id"      : "1",
                     "Statement" : [
                         {
@@ -317,7 +317,7 @@
 								"Fn::Sub" : "arn:aws:s3:::${ReportRepositoryS3Bucket}/*"								
 							},
 							"Condition" : {
-								"ArnNotLike" : {
+								"ArnNotEquals" : {
 									"aws:PrincipalArn" : [
 										{
 											"Fn::Sub" : "${LambdaCURRole.Arn}"
